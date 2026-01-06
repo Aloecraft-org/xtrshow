@@ -366,9 +366,16 @@ def main():
                         help='Ignore common directories (node_modules, .git, etc.)')
     parser.add_argument('--no-ignore', action='store_true',
                         help='Show all files (disable default ignore patterns)')
-    
+    parser.add_argument('-o', '--outfile', type=str, default=None,
+                        help='Print output to file')
+
     args = parser.parse_args()
-    
+
+    if args.outfile:
+        if not os.access(args.outfile, os.W_OK):
+            print(f"The file location '{args.outfile}' is not writable or does not exist with write permissions.")
+            return
+
     # Determine ignore patterns
     if args.no_ignore:
         ignore_patterns = set()
@@ -401,14 +408,20 @@ def main():
                     with open(path, 'r') as f:
                         root_ext = os.path.splitext(path)
                         file_extension = root_ext[1]
-                        print(f"""
+
+                        result = f"""
 # =============================================================================
 # File: {path}
 # =============================================================================
 ``` {file_extension}
 {f.read()}
 ```
-""")
+"""
+                        if args.outfile:
+                            with open(args.outfile,'w') as outfile:
+                                outfile.write(result)
+                        else:
+                            print(result)
                 except (IOError, UnicodeDecodeError) as e:
                     print(f"# File: {path} (Error: {e})", file=sys.stderr)
     except KeyboardInterrupt:
