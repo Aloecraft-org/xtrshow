@@ -141,9 +141,17 @@ def build_file_tree(root_path, max_depth=None, pattern=None, ignore_patterns=Non
             
             for i, entry in enumerate(filtered_entries):
                 is_last_entry = (i == len(filtered_entries) - 1)
-                child = build_node(entry, depth + 1, is_last_entry, node)
-                if child:
-                    node.children.append(child)
+                is_directory = entry.is_dir()
+                is_link = entry.is_symlink()
+
+                # ONLY recurse if it's a directory AND NOT a symlink
+                if is_directory and not is_link:
+                    child = build_node(entry, depth + 1, is_last_entry, node)
+                    if child:
+                        node.children.append(child)
+                else:
+                    # TODO: Treat symlinks to directories as files (or special nodes)
+                    pass
         
         return node
     
