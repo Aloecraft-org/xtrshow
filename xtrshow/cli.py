@@ -372,8 +372,9 @@ def main():
     args = parser.parse_args()
 
     if args.outfile:
-        if not os.access(args.outfile, os.W_OK):
-            print(f"The file location '{args.outfile}' is not writable or does not exist with write permissions.")
+        directory = os.path.dirname(args.outfile) or '.'
+        if not os.access(directory, os.W_OK):
+            print(f"Directory '{directory}' is not writable. Cannot create file.")
             return
 
     # Determine ignore patterns
@@ -403,27 +404,30 @@ def main():
         
         if result is not None:
             # Print selected files to stdout
+
+            output = []
+
             for path in result:
                 try:
                     with open(path, 'r') as f:
                         root_ext = os.path.splitext(path)
                         file_extension = root_ext[1]
+                        output.append(f"""
 
-                        result = f"""
-# =============================================================================
-# File: {path}
-# =============================================================================
-``` {file_extension}
+# `{path}`
+---
+
+``` {file_extension[1:] if file_extension.startswith(".") else file_extension}
 {f.read()}
 ```
-"""
-                        if args.outfile:
-                            with open(args.outfile,'w') as outfile:
-                                outfile.write(result)
-                        else:
-                            print(result)
+""")
                 except (IOError, UnicodeDecodeError) as e:
                     print(f"# File: {path} (Error: {e})", file=sys.stderr)
+            if args.outfile:
+                with open(args.outfile,'w') as outfile:
+                    outfile.write("\n".join(output))
+            else:
+                print("\n".join(output))
     except KeyboardInterrupt:
         pass
 
