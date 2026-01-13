@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xtrshow"
-version = "0.1.0"
+version = "0.1.1"
 description = "Interactive file tree selector for sharing code with LLMs"
 readme = "README.md"
 authors = [

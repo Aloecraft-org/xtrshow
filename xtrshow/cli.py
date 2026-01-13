@@ -2,7 +2,9 @@
 """
 Interactive file tree selector for sharing code with LLMs
 
-usage: xtrshow [-h] [--max-depth MAX_DEPTH] [--pattern PATTERN] [--ignore] [--no-ignore] [directory]
+usage: xtrshow [-h] [--max-depth MAX_DEPTH] [--pattern PATTERN] [--ignore] [--no-ignore] [-o OUTFILE] [directory]
+
+Interactive file tree selector
 
 positional arguments:
   directory             Directory to browse (default: current directory)
@@ -14,7 +16,8 @@ options:
   --pattern PATTERN     Filter files by name pattern
   --ignore              Ignore common directories (node_modules, .git, etc.)
   --no-ignore           Show all files (disable default ignore patterns)
-
+  -o OUTFILE, --outfile OUTFILE
+                        Print output to file
 ---
 
 Copyright [2026] [michael@aloecraft.org]
@@ -61,7 +64,7 @@ class FileNode:
         self.is_dir = self.path.is_dir()
         self.parent = parent
         self.children = []
-        self.expanded = True  # Directories start expanded
+        self.expanded = False
         
     def get_display_line(self):
         """Generate the tree-style display line"""
@@ -148,6 +151,7 @@ def build_file_tree(root_path, max_depth=None, pattern=None, ignore_patterns=Non
         return node
     
     root_node = build_node(root, 0)
+    root_node.expanded = True
     return root_node, hidden_count
 
 
