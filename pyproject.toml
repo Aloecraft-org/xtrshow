@@ -4,32 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xtrshow"
-version = "0.1.2"
-description = "Interactive file tree selector for sharing code with LLMs"
+# Make sure this matches __init__.py
+version = "0.2.0" 
+description = "The bridge between your local codebase and LLMs."
 readme = "README.md"
 authors = [
     {name = "Michael Godfrey", email = "michael@aloecraft.org"}
 ]
-license = "Apache-2.0"
-requires-python = ">=3.7"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
 ]
-keywords = ["cli", "tui", "file-selector", "llm", "tree"]
+keywords = ["cli", "tui", "llm", "ai", "copilot", "patch"]
+dependencies = [
+    "windows-curses; sys_platform == 'win32'"
+]
 
 [project.urls]
-Homepage = "https://github.com/aloecraft/xtrshow"
-Repository = "https://github.com/aloecraft/xtrshow"
+Homepage = "https://github.com/Aloecraft-org/xtrshow"
+Repository = "https://github.com/Aloecraft-org/xtrshow"
 
 [project.scripts]
 xtrshow = "xtrshow.cli:main"
+xtrpatch = "xtrshow.repatch:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

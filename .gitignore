@@ -1,3 +1,10 @@
 **/__pycache__
 **/*.egg-info
-dist
+dist/
+build/
+.pytest_cache/
+.coverage
+
+# xtrpatch backups and archives
+.xtrpatch/
+*.patch

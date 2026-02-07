@@ -366,6 +366,8 @@ def main():
                         help='Maximum depth to traverse')
     parser.add_argument('--pattern', type=str, default=None,
                         help='Filter files by name pattern')
+    parser.add_argument('--clean', action='store_true',
+                        help='Omit line number prefixes (print raw file content)')
     parser.add_argument('--ignore', action='store_true',
                         help='Ignore common directories (node_modules, .git, etc.)')
     parser.add_argument('--no-ignore', action='store_true',
@@ -414,15 +416,24 @@ def main():
             for path in result:
                 try:
                     with open(path, 'r') as f:
+                        content = f.read().replace('\r\n', '\n')
                         root_ext = os.path.splitext(path)
                         file_extension = root_ext[1]
+                        
+                        if not args.clean:
+                            lines = content.splitlines()
+                            max_ln_width = len(str(len(lines)))
+                            formatted_content = "\n".join(
+                                f"{i+1:>{max_ln_width}}:{line}" for i, line in enumerate(lines)
+                            )
+                        else:
+                            formatted_content = content
+
                         output.append(f"""
-
-# `{path}`
----
-
+--- a/{path}
++++ b/{path}
 ``` {file_extension[1:] if file_extension.startswith(".") else file_extension}
-{f.read()}
+{formatted_content}
 ```
 """)
                 except (IOError, UnicodeDecodeError) as e:
