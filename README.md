@@ -4,7 +4,7 @@
 
 <img src="doc/icon.png" style="height:96px; width:96px;"/>
 
-**The bridge between your local codebase and LLMs.**
+**Code Extraction & Patching Made Easy**
 
 [![PyPI Version](https://img.shields.io/pypi/v/xtrshow.svg)](https://pypi.org/project/xtrshow/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/xtrshow.svg)](https://pypi.org/project/xtrshow/)
@@ -13,14 +13,13 @@
 [![CI Status](https://github.com/Aloecraft-org/xtrshow/actions/workflows/main.yml/badge.svg)](https://github.com/Aloecraft-org/xtrshow/actions/workflows/main.yml)
 [![Downloads](https://static.pepy.tech/badge/xtrshow)](https://pepy.tech/project/xtrshow)
 
-
 </div>
 
-`xtrshow` is a lightweight CLI suite designed to optimize the "Context Injection" and "Code Application" loop when working with AI coding assistants (ChatGPT, Claude, Gemini, etc.).
+`xtrshow` is a CLI suite designed to optimize the "Context Injection" and "Code Application" loop when working with AI coding assistants (ChatGPT, Claude, Gemini, etc.).
 
-It consists of two tools:
-1.  **`xtrshow`**: A TUI to select, compress, and format code context for your LLM.
-2.  **`xtrpatch`**: A surgical patching tool to apply LLM-generated changes back to your source code safely.
+It solves the two biggest points of friction in AI-assisted development:
+1.  **Getting code INTO the LLM:** Quickly selecting relevant files and formatting them for optimal token usage.
+2.  **Getting code OUT of the LLM:** Applying changes safely without manually copy-pasting dozens of snippets.
 
 ## Installation
 
@@ -28,119 +27,55 @@ It consists of two tools:
 pip install xtrshow
 ```
 
-## The Workflow
+## `xtrshow` and `xtrpatch` Commands: Quickstart
 
-### 1. Extract Context (`xtrshow`)
+The workflow consists of three steps: **Extract, Prompt, Apply**.
 
-Stop manually copying and pasting files.
-
-Run `xtrshow` in your directory. Navigate with arrow keys, select files with `Space`, and hit `Enter` (or use `-o` to save to a file).
-
+1. **Extract Context:** Run `xtrshow` to interactively select files and copy them to your clipboard.
 ```bash
-# Open interactive TUI
-xtrshow
-
-# Or pipe directly to clipboard (Mac/Linux)
-xtrshow | pbcopy 
+xtrshow | pbcopy  # (MacOS/Linux)
+```
+2. **Prompt:** Paste the context into your LLM. Ask it to provide changes using the **Search & Replace Block** format.
+3. **Apply:** Save the LLM's response to a file (e.g., `changes.txt`) and apply it.
+```bash
+xtrpatch changes.txt
 ```
 
-The output is formatted specifically for LLMs, including file paths and line numbers (enabled by default) to assist in referencing specific code blocks.
 
-### 2. Prompt the LLM
 
-Paste the output into your LLM. When asking for changes, include the following instruction to get a compatible patch:
-
-> "Provide changes using the Multi-File Search and Replace Block format."
-
-### 3. Apply Changes (`xtrpatch`)
-
-Save the LLM's response to a file (e.g., `response.txt`) and apply it:
-
-```bash
-xtrpatch response.txt
-```
-
-`xtrpatch` is whitespace-insensitive and uses fuzzy matching, making it significantly more robust than standard `git apply` when dealing with LLM hallucinations or formatting errors.
-
----
+👉 **[Read the Full Getting Started Guide](https://www.google.com/search?q=doc/GETTING_STARTED.md)**
 
 ## Features
 
-### Safety First (Atomic Backups)
+### `xtrshow` (The Extractor)
 
-`xtrpatch` never destroys code.
+* **Interactive TUI:** Browse and select files with a fast, keyboard-driven interface.
+* **LLM-Optimized Output:** Formats code with line numbers and file headers specifically designed for AI comprehension.
+* **Smart Filtering:** Automatically ignores `node_modules`, `.git`, and binary files.
+* **Multi-File Export:** Support for dumping separate files for RAG pipelines via `--multi`.
 
-* Every time a file is patched, the original is backed up to `.xtrpatch/<file>.orig`.
-* Backups are versioned (`file.py.orig`, `file.py.1.orig`, `file.py.2.orig`).
-* The patch itself is archived alongside the backup.
+### `xtrpatch` (The Patcher)
 
-### Reverting
+* **Safety First:** Automatic atomic backups for every modified file.
+* **Robust Matching:** "Fuzzy" whitespace matching handles common LLM indentation errors.
+* **Full Lifecycle:** Supports creating files, deleting files, and modifying existing code.
+* **Undo Button:** Built-in `--revert` command to instantly unwind changes.
 
-Made a mistake? You can unwind changes easily:
+👉 **[See Detailed Feature List](https://www.google.com/search?q=doc/FEATURES.md)**
 
-```bash
-# Revert a specific file to its state before the last patch
-xtrpatch --revert src/main.py
+## Prompting the LLM
 
-# Revert all files modified by a specific patch file
-xtrpatch --revert response.txt
+To use `xtrpatch` effectively, you must instruct the LLM to output code in a specific format (Search and Replace Blocks). Standard git diffs are often too fragile for LLM generation.
 
-```
+We provide a copy-pasteable instruction block for this purpose.
 
-### File Creation
+👉 **[Read the Prompting Guide](https://www.google.com/search?q=doc/PROMPTING.md)**
 
-If the LLM wants to create a new file, `xtrpatch` handles that too.
+## Advanced Workflows
 
-```text
---- a/src/new_feature.py
-<<<<
-====
-def hello():
-    print("New file created!")
->>>>
+For power users of **Google Gemini**, we have developed a comprehensive "Developer Protocol" that turns the LLM into a more reliable pair programmer with persistent state management and standardized output formats.
 
-```
-
-## Patch Format Specification
-
-`xtrpatch` uses a custom, hallucination-resistant format:
-
-```text
---- a/path/to/file.py
-<<<< 50
-def old_function():
-    return False
-====
-def old_function():
-    return True
->>>>
-
-```
-
-* **Header:** `--- a/path/to/file`
-* **Start:** `<<<< LINE_HINT` or `<<<< START~END` (e.g., `<<<< 50~55`). The `~` indicates an approximate range/fuzzy hint.
-* **Search Block:** The existing code to find.
-* **Divider:** `====`
-* **Replace Block:** The new code.
-* **Divider (Optional):** `====` (Use a second divider to provide Tail Context).
-* **Tail Context (Optional):** Code that must exist *immediately after* the block to verify location.
-* **End:** `>>>>`
-
-### Example with Tail Context
-
-```text
---- a/src/main.rs
-<<<< 10~15
-    let x = 1;
-    let y = 2;
-====
-    let x = 10;
-    let y = 20;
-====
-    // This line must exist after the block for the patch to apply
-    println!("Calculating...");
->>>>
-```
+👉 **[See the Gemini Protocol](https://www.google.com/search?q=doc/GEMINI.md)**
 
 ## License
 

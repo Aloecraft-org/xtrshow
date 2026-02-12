@@ -255,6 +255,25 @@ def apply_changes(changes_dict, patch_source_path=None):
     for filepath, blocks in changes_dict.items():
         print(f"\nProcessing: {filepath}")
         
+        # --- File Deletion Logic ---
+        if os.path.exists(filepath):
+            # Trigger: Single block, Empty Search, Empty Replace
+            if len(blocks) == 1 and not blocks[0]['search'] and not blocks[0]['replace']:
+                try:
+                    # 1. Backup (Crucial for Undo/Revert)
+                    backup_path, version = create_backup(filepath)
+                    if backup_path:
+                        print(f"  (Backup created at {backup_path})")
+                        if patch_source_path:
+                            archive_patch_file(patch_source_path, filepath, version)
+                    
+                    # 2. Delete
+                    os.remove(filepath)
+                    print(f"  ✓ Deleted file: {filepath}")
+                except Exception as e:
+                    print(f"  ✗ Failed to delete file: {e}")
+                continue
+
         if not os.path.exists(filepath):
             if len(blocks) == 1 and not blocks[0]['search']:
                 try:

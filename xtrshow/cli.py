@@ -374,6 +374,8 @@ def main():
                         help='Show all files (disable default ignore patterns)')
     parser.add_argument('-o', '--outfile', type=str, default=None,
                         help='Print output to file')
+    parser.add_argument('--multi', nargs='?', const='.xtrshow', default=None, metavar='DIR',
+                        help='Output individual files to directory (default: .xtrshow)')
 
     args = parser.parse_args()
 
@@ -412,6 +414,16 @@ def main():
             # Print selected files to stdout
 
             output = []
+            multi_dir = None
+
+            if args.multi:
+                multi_dir = Path(args.multi)
+                try:
+                    multi_dir.mkdir(parents=True, exist_ok=True)
+                    print(f"Saving individual files to: {multi_dir}", file=sys.stderr)
+                except Exception as e:
+                    print(f"Error creating directory {multi_dir}: {e}", file=sys.stderr)
+                    return
 
             for path in result:
                 try:
@@ -429,20 +441,35 @@ def main():
                         else:
                             formatted_content = content
 
-                        output.append(f"""
+                        # We construct the block using concatenation to avoid confusing LLM parsers
+                        # when this file is pasted into prompts.
+                        code_fence = "```"
+                        block = f"""
 --- a/{path}
 +++ b/{path}
-``` {file_extension[1:] if file_extension.startswith(".") else file_extension}
+{code_fence} {file_extension[1:] if file_extension.startswith(".") else file_extension}
 {formatted_content}
-```
-""")
+{code_fence}
+"""
+                        if multi_dir:
+                            # Replace path separators with double underscore for flat filename
+                            safe_name = path.replace(os.sep, '__') + ".xtr.md"
+                            out_path = multi_dir / safe_name
+                            with open(out_path, 'w') as out_f:
+                                out_f.write(block.strip())
+                        else:
+                            output.append(block)
+
                 except (IOError, UnicodeDecodeError) as e:
                     print(f"# File: {path} (Error: {e})", file=sys.stderr)
-            if args.outfile:
-                with open(args.outfile,'w') as outfile:
-                    outfile.write("\n".join(output))
-            else:
-                print("\n".join(output))
+
+            if not multi_dir:
+                final_output = "\n".join(output)
+                if args.outfile:
+                    with open(args.outfile,'w') as outfile:
+                        outfile.write(final_output)
+                else:
+                    print(final_output)
     except KeyboardInterrupt:
         pass
 
