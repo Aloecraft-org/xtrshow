@@ -82,7 +82,8 @@ def parse_multi_file_patch(content, default_target=None):
             i += 1
             continue
 
-        block_match = re.match(r'^<<<<\s*(\d+)?(?::(\d+))?', stripped)
+        # Support ':' or '~' for range hints (e.g., 10:15 or 10~15)
+        block_match = re.match(r'^<<<<\s*(\d+)?(?:[:~](\d+))?', stripped)
         
         if block_match:
             block_start_line = i + 1
@@ -102,10 +103,23 @@ def parse_multi_file_patch(content, default_target=None):
             if i < len(lines) and lines[i].strip() == "====":
                 i += 1 
                 replace_lines = []
-                while i < len(lines) and lines[i].strip() != ">>>>":
+                tail_lines = []
+                
+                # Consume Replace Block (until >>>> OR second ====)
+                while i < len(lines):
+                    s = lines[i].strip()
+                    if s == ">>>>" or s == "====":
+                        break
                     replace_lines.append(lines[i])
                     i += 1
                 
+                # Check for Tail Context (second ====)
+                if i < len(lines) and lines[i].strip() == "====":
+                    i += 1 # skip second ====
+                    while i < len(lines) and lines[i].strip() != ">>>>":
+                        tail_lines.append(lines[i])
+                        i += 1
+
                 if i < len(lines) and lines[i].strip() == ">>>>":
                     if current_file not in changes:
                         changes[current_file] = []
@@ -114,7 +128,8 @@ def parse_multi_file_patch(content, default_target=None):
                         'patch_line': block_start_line,
                         'hint': hint_start,
                         'search': search_lines,
-                        'replace': replace_lines
+                        'replace': replace_lines,
+                        'tail': tail_lines
                     })
             i += 1
             continue
@@ -276,10 +291,34 @@ def apply_changes(changes_dict, patch_source_path=None):
             
             if match:
                 start, end = match
-                new_lines = [l + '\n' for l in block['replace']]
-                file_lines[start:end] = new_lines
-                success_count += 1
-                print(f"  ✓ Applied patch at line {start + 1}")
+                
+                # --- Tail Context Verification ---
+                valid_match = True
+                if block.get('tail'):
+                    # Check if the lines immediately AFTER the match match the tail block
+                    tail_start = end
+                    tail_block = block['tail']
+                    
+                    if tail_start + len(tail_block) > len(file_lines):
+                        valid_match = False
+                        print(f"  ! Tail context mismatch (End of file reached)")
+                    else:
+                        for idx, tail_line in enumerate(tail_block):
+                            file_line = file_lines[tail_start + idx]
+                            if normalize(file_line) != normalize(tail_line):
+                                valid_match = False
+                                print(f"  ! Tail context mismatch at line {tail_start + idx + 1}")
+                                print(f"    Expected: {tail_line.strip()}")
+                                print(f"    Found:    {file_line.strip()}")
+                                break
+                
+                if valid_match:
+                    new_lines = [l + '\n' for l in block['replace']]
+                    file_lines[start:end] = new_lines
+                    success_count += 1
+                    print(f"  ✓ Applied patch at line {start + 1}")
+                else:
+                    print(f"  ✗ Skipped block due to context mismatch.")
             else:
                 hint_msg = f"(Hint: {block['hint']})" if block['hint'] else "(No line hint)"
                 

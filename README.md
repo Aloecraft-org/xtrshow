@@ -118,11 +118,29 @@ def old_function():
 ```
 
 * **Header:** `--- a/path/to/file`
-* **Start:** `<<<< LINE_HINT` (Line number is optional but recommended for disambiguation)
+* **Start:** `<<<< LINE_HINT` or `<<<< START~END` (e.g., `<<<< 50~55`). The `~` indicates an approximate range/fuzzy hint.
 * **Search Block:** The existing code to find.
 * **Divider:** `====`
 * **Replace Block:** The new code.
+* **Divider (Optional):** `====` (Use a second divider to provide Tail Context).
+* **Tail Context (Optional):** Code that must exist *immediately after* the block to verify location.
 * **End:** `>>>>`
+
+### Example with Tail Context
+
+```text
+--- a/src/main.rs
+<<<< 10~15
+    let x = 1;
+    let y = 2;
+====
+    let x = 10;
+    let y = 20;
+====
+    // This line must exist after the block for the patch to apply
+    println!("Calculating...");
+>>>>
+```
 
 ## License
 
