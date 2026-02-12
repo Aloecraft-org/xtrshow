@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xtrshow"
 # Make sure this matches __init__.py
-version = "0.2.0" 
+version = "0.2.1" 
 description = "The bridge between your local codebase and LLMs."
 readme = "README.md"
 authors = [
