@@ -470,6 +470,10 @@ def main():
                         outfile.write(final_output)
                 else:
                     print(final_output)
+            else:
+                print(f"hint:\n\tcd {multi_dir}\n")
+                print( "hint:\n\tfor file in *; do mv \"$file\" \"r1_${file}\"; done")
+                
     except KeyboardInterrupt:
         pass
 

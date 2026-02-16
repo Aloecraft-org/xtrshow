@@ -64,6 +64,7 @@ def parse_multi_file_patch(content, default_target=None):
     """Parses a patch file containing multiple file sections."""
     changes = {}
     current_file = default_target
+    current_annotation = None
     lines = content.splitlines()
     i = 0
     
@@ -71,6 +72,12 @@ def parse_multi_file_patch(content, default_target=None):
         line = lines[i]
         stripped = line.strip()
         
+        # Capture Annotations
+        if stripped.startswith("@"):
+            current_annotation = stripped[1:].strip()
+            i += 1
+            continue
+
         if line.startswith("--- ") or line.startswith("+++ ") or line.startswith("File: "):
             parts = line.split(maxsplit=1)
             if len(parts) > 1:
@@ -79,6 +86,7 @@ def parse_multi_file_patch(content, default_target=None):
                    (line.startswith("+++ ") and raw_path.startswith("b/")):
                     raw_path = raw_path[2:]
                 current_file = raw_path
+            current_annotation = None # Reset annotation on file change
             i += 1
             continue
 
@@ -129,8 +137,10 @@ def parse_multi_file_patch(content, default_target=None):
                         'hint': hint_start,
                         'search': search_lines,
                         'replace': replace_lines,
-                        'tail': tail_lines
+                        'tail': tail_lines,
+                        'annotation': current_annotation
                     })
+                    current_annotation = None # Consumed
             i += 1
             continue
             
@@ -206,6 +216,154 @@ def archive_patch_file(patch_source_path, target_filepath, version_index):
     except Exception as e:
         print(f"  ! Warning: Failed to archive patch file: {e}")
 
+def save_log_file(log_content, target_filepath, version_index):
+    """Saves the command output log."""
+    try:
+        target_path = Path(target_filepath).resolve()
+        try:
+            rel_path = target_path.relative_to(Path.cwd())
+        except ValueError:
+            rel_path = Path(target_path.name)
+            
+        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        filename = rel_path.name
+        
+        suffix = ".out" if version_index == 0 else f".{version_index}.out"
+        dest = backup_dir / (filename + suffix)
+        
+        with open(dest, 'w') as f:
+            f.write(log_content)
+    except Exception as e:
+        print(f"  ! Warning: Failed to save log file: {e}")
+
+def save_error_report(target_filepath, version_index, log_content):
+    """Creates a combined error report with quintuple backticks."""
+    try:
+        target_path = Path(target_filepath).resolve()
+        try:
+            rel_path = target_path.relative_to(Path.cwd())
+        except ValueError:
+            rel_path = Path(target_path.name)
+            
+        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
+        filename = rel_path.name
+        
+        suffix_base = "" if version_index == 0 else f".{version_index}"
+        
+        orig_path = backup_dir / (filename + suffix_base + ".orig")
+        patch_path = backup_dir / (filename + suffix_base + ".patch")
+        
+        report_path = backup_dir / (filename + suffix_base + ".rpterr")
+        
+        report = []
+        
+        # 1. Original
+        report.append(f"Content of {orig_path.name}:")
+        report.append("'''''")
+        if orig_path.exists():
+            report.append(orig_path.read_text())
+        else:
+            report.append("(File not found)")
+        report.append("'''''\n")
+
+        # 2. Patch
+        report.append(f"Content of {patch_path.name}:")
+        report.append("'''''")
+        if patch_path.exists():
+            report.append(patch_path.read_text())
+        else:
+            report.append("(File not found)")
+        report.append("'''''\n")
+
+        # 3. Output
+        report.append(f"Output Log:")
+        report.append("'''''")
+        report.append(log_content)
+        report.append("'''''\n")
+        
+        with open(report_path, 'w') as f:
+            f.write("\n".join(report))
+            
+        print(f"  ! Error Report generated: {report_path}")
+
+    except Exception as e:
+        print(f"  ! Warning: Failed to generate error report: {e}")
+
+def save_log_file(log_content, target_filepath, version_index):
+    """Saves the command output log."""
+    try:
+        target_path = Path(target_filepath).resolve()
+        try:
+            rel_path = target_path.relative_to(Path.cwd())
+        except ValueError:
+            rel_path = Path(target_path.name)
+            
+        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        filename = rel_path.name
+        
+        suffix = ".out" if version_index == 0 else f".{version_index}.out"
+        dest = backup_dir / (filename + suffix)
+        
+        with open(dest, 'w') as f:
+            f.write(log_content)
+    except Exception as e:
+        print(f"  ! Warning: Failed to save log file: {e}")
+
+def save_error_report(target_filepath, version_index, log_content):
+    """Creates a combined error report with quintuple backticks."""
+    try:
+        target_path = Path(target_filepath).resolve()
+        try:
+            rel_path = target_path.relative_to(Path.cwd())
+        except ValueError:
+            rel_path = Path(target_path.name)
+            
+        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
+        filename = rel_path.name
+        
+        suffix_base = "" if version_index == 0 else f".{version_index}"
+        
+        orig_path = backup_dir / (filename + suffix_base + ".orig")
+        patch_path = backup_dir / (filename + suffix_base + ".patch")
+        
+        report_path = backup_dir / (filename + suffix_base + ".rpterr")
+        
+        report = []
+        
+        # 1. Original
+        report.append(f"Content of {orig_path.name}:")
+        report.append("'''''")
+        if orig_path.exists():
+            report.append(orig_path.read_text())
+        else:
+            report.append("(File not found)")
+        report.append("'''''\n")
+
+        # 2. Patch
+        report.append(f"Content of {patch_path.name}:")
+        report.append("'''''")
+        if patch_path.exists():
+            report.append(patch_path.read_text())
+        else:
+            report.append("(File not found)")
+        report.append("'''''\n")
+
+        # 3. Output
+        report.append(f"Output Log:")
+        report.append("'''''")
+        report.append(log_content)
+        report.append("'''''\n")
+        
+        with open(report_path, 'w') as f:
+            f.write("\n".join(report))
+            
+        print(f"  ! Error Report generated: {report_path}")
+
+    except Exception as e:
+        print(f"  ! Warning: Failed to generate error report: {e}")
+
 def revert_file(target_file):
     """Reverts the file to its most recent backup."""
     try:
@@ -253,7 +411,14 @@ def revert_file(target_file):
 def apply_changes(changes_dict, patch_source_path=None):
     """Applies parsed changes to files."""
     for filepath, blocks in changes_dict.items():
-        print(f"\nProcessing: {filepath}")
+        # Setup logging capture
+        log_buffer = []
+        def log(msg):
+            print(msg)
+            log_buffer.append(str(msg))
+
+        log(f"\nProcessing: {filepath}")
+        version = 0
         
         # --- File Deletion Logic ---
         if os.path.exists(filepath):
@@ -263,15 +428,17 @@ def apply_changes(changes_dict, patch_source_path=None):
                     # 1. Backup (Crucial for Undo/Revert)
                     backup_path, version = create_backup(filepath)
                     if backup_path:
-                        print(f"  (Backup created at {backup_path})")
+                        log(f"  (Backup created at {backup_path})")
                         if patch_source_path:
                             archive_patch_file(patch_source_path, filepath, version)
                     
                     # 2. Delete
                     os.remove(filepath)
-                    print(f"  ✓ Deleted file: {filepath}")
+                    log(f"  ✓ Deleted file: {filepath}")
+                    save_log_file("\n".join(log_buffer), filepath, version)
                 except Exception as e:
-                    print(f"  ✗ Failed to delete file: {e}")
+                    log(f"  ✗ Failed to delete file: {e}")
+                    save_log_file("\n".join(log_buffer), filepath, version)
                 continue
 
         if not os.path.exists(filepath):
@@ -282,91 +449,131 @@ def apply_changes(changes_dict, patch_source_path=None):
                     backup_path, version = get_backup_path(Path(filepath), Path.cwd() / ".xtrpatch")
                     backup_path.parent.mkdir(parents=True, exist_ok=True)
                     backup_path.touch()
-                    print(f"  (Backup created at {backup_path})")
+                    log(f"  (Backup created at {backup_path})")
                     if patch_source_path:
                         # Pass filepath to archive
                         archive_patch_file(patch_source_path, filepath, version)
                     with open(filepath, 'w') as f:
                         f.write(new_content)
-                    print(f"  ✓ Created new file: {filepath}")
+                    log(f"  ✓ Created new file: {filepath}")
+                    save_log_file("\n".join(log_buffer), filepath, version)
                 except Exception as e:
-                    print(f"  ✗ Failed to create file: {e}")
+                    log(f"  ✗ Failed to create file: {e}")
+                    save_log_file("\n".join(log_buffer), filepath, version)
                 continue
             else:
-                print(f"  Error: File {filepath} not found.")
+                log(f"  Error: File {filepath} not found.")
                 continue
+
+        # --- Modification Logic ---
+        
+        # 1. Always Create Backup First (Transaction Start)
+        backup_path, version = create_backup(filepath)
+        if backup_path:
+            log(f"  (Backup created at {backup_path})")
+            if patch_source_path:
+                archive_patch_file(patch_source_path, filepath, version)
+        else:
+            version = 0
 
         try:
             with open(filepath, 'r') as f:
                 file_lines = f.readlines()
         except Exception as e:
-            print(f"  Error reading file: {e}")
+            log(f"  Error reading file: {e}")
             continue
 
         success_count = 0
+        error_occurred = False
         
         for block in blocks:
+            # Print intent if available
+            if block.get('annotation'):
+                log(f"  Patch Annotation: {block['annotation']}")
+
             match = find_match(file_lines, block['search'], block['hint'])
             
             if match:
                 start, end = match
                 
-                # --- Tail Context Verification ---
+                # --- Tail Context Verification (Robust) ---
                 valid_match = True
                 if block.get('tail'):
-                    # Check if the lines immediately AFTER the match match the tail block
-                    tail_start = end
-                    tail_block = block['tail']
+                    # 1. Normalize expectation: Ignore blank lines in the patch tail
+                    norm_tail_block = [normalize(l) for l in block['tail'] if normalize(l)]
                     
-                    if tail_start + len(tail_block) > len(file_lines):
-                        valid_match = False
-                        print(f"  ! Tail context mismatch (End of file reached)")
-                    else:
-                        for idx, tail_line in enumerate(tail_block):
-                            file_line = file_lines[tail_start + idx]
-                            if normalize(file_line) != normalize(tail_line):
+                    if norm_tail_block:
+                        current_file_idx = end
+                        tail_idx = 0
+                        
+                        while tail_idx < len(norm_tail_block):
+                            if current_file_idx >= len(file_lines):
                                 valid_match = False
-                                print(f"  ! Tail context mismatch at line {tail_start + idx + 1}")
-                                print(f"    Expected: {tail_line.strip()}")
-                                print(f"    Found:    {file_line.strip()}")
+                                log(f"  ! Tail context mismatch (End of file reached)")
                                 break
+                            
+                            norm_file = normalize(file_lines[current_file_idx])
+                            
+                            # 2. Robustness: Skip blank lines in the file
+                            if not norm_file:
+                                current_file_idx += 1
+                                continue
+                                
+                            # 3. Compare content
+                            norm_tail = norm_tail_block[tail_idx]
+                            
+                            if norm_file != norm_tail:
+                                valid_match = False
+                                log(f"  ! Tail context mismatch at line {current_file_idx + 1}")
+                                log(f"    Expected: {norm_tail}")
+                                log(f"    Found:    {norm_file}")
+                                break
+                                
+                            current_file_idx += 1
+                            tail_idx += 1
                 
                 if valid_match:
                     new_lines = [l + '\n' for l in block['replace']]
                     file_lines[start:end] = new_lines
                     success_count += 1
-                    print(f"  ✓ Applied patch at line {start + 1}")
+                    log(f"  ✓ Applied patch at line {start + 1}")
                 else:
-                    print(f"  ✗ Skipped block due to context mismatch.")
+                    log(f"  ✗ Skipped block due to context mismatch.")
+                    error_occurred = True
             else:
                 hint_msg = f"(Hint: {block['hint']})" if block['hint'] else "(No line hint)"
                 
+                
                 already_applied = find_match(file_lines, block['replace'])
                 
+                # Context info for failure
+                note = f" [Goal: {block['annotation']}]" if block.get('annotation') else ""
+
                 if already_applied:
-                    print(f"  ! Skipped: Block from patch line {block['patch_line']} appears to be already applied.")
-                    print(f"    (Found matching replacement code at line {already_applied[0]+1})")
+                    log(f"  ! Skipped: Block from patch line {block['patch_line']} appears to be already applied.{note}")
+                    log(f"    (Found matching replacement code at line {already_applied[0]+1})")
                 else:
-                    print(f"  ✗ FAILED to find block from patch line {block['patch_line']} {hint_msg}")
+                    log(f"  ✗ FAILED to find block from patch line {block['patch_line']} {hint_msg}{note}")
+                    error_occurred = True
                     if block['search']:
                         preview = block['search'][0].strip()
                         if len(preview) > 50:
                             preview = preview[:47] + "..."
-                        print(f"    Searching for: '{preview}'")
+                        log(f"    Searching for: '{preview}'")
+
+        # Save output log
+        save_log_file("\n".join(log_buffer), filepath, version)
+
+        # Generate Error Report if needed
+        if error_occurred:
+            save_error_report(filepath, version, "\n".join(log_buffer))
 
         if success_count > 0:
-            backup_path, version = create_backup(filepath)
-            if backup_path:
-                print(f"  (Backup created at {backup_path})")
-                if patch_source_path:
-                    # Pass filepath to archive function
-                    archive_patch_file(patch_source_path, filepath, version)
-            
             with open(filepath, 'w') as f:
                 f.writelines(file_lines)
-            print(f"  Saved {success_count} changes.")
+            log(f"  Saved {success_count} changes.")
         else:
-            print("  No changes applied.")
+            log("  No changes applied.")
 
 def main():
     parser = argparse.ArgumentParser(

@@ -25,27 +25,76 @@ When you ask for changes, you must tell the LLM **how** to format the code so `x
 
 **Copy and paste the following block into your prompt (or save it as a Custom Instruction/System Prompt):**
 
+`````md
+**Instruction: Code Modification Format**
+
+Please provide all code changes using the **Multi-File Search and Replace Block** format.
+**CRITICAL:** Wrap your *entire* output in **quadruple backticks** (````) to prevent rendering errors.
+
+**Syntax:**
+
+```text
+--- a/path/to/target_file.py
+@ patch annotation describing modification
+<<<< LINE_HINT
+[Original Code Block]
+====
+[New Code Block]
+====
+[Optional: Tail Context]
+>>>>
+
 ```
-**Code Output Formatting Instruction:**
+**Rules:**
 
-Please provide all code changes using the **Multi-File Search and Replace Block** format. Do not use standard unified diffs or git patches.
+1. **Header:** `--- a/path/to/file`.
+2. **Path Resolution:** If source code is provided in a single dump (e.g. `x.md`), use the **actual file path** found *inside* the text (e.g. `src/utils.py`), not the container filename.
+3. **Start:** `<<<<` followed by a line number hint (e.g., `<<<< 50`). This is a fuzzy anchor; rely on the content match for precision.
+4. **Search:** Copy the *exact* original code to replace. No comments or placeholders.
+5. **Replace:** The new code to insert.
+6. **Tail Context (Optional):** Use a second `====` divider to provide 1-2 lines of code that must exist *immediately after* the replacement. Use this to anchor small inserts without quoting large blocks.
+7. **End:** `>>>>`.
 
-**Output Formatting:**
-* **CRITICAL:** Wrap your entire patch output in **quadruple backticks** (````) instead of triple backticks. This prevents markdown rendering errors.
+**Operations:**
 
-**Patch Syntax:**
-1.  **Header:** Start every file section with `--- a/path/to/file`.
-2.  **Start Block:** `<<<< LINE_HINT` (e.g. `<<<< 50` or `<<<< 50~55`).
-3.  **Original Code:** Paste the *exact* lines from the source code that need to be replaced. Do not use comments like `// ... existing code ...`.
-4.  **Divider:** `====`
-5.  **New Code:** Paste the new code to insert.
-6.  **End Block:** `>>>>`
+* **Modify:** Provide Search and Replace blocks. Ensure the Search block is unique.
+* **Create:** Empty Search block (`<<<<\n====`).
+* **Delete:** Empty Search AND Replace blocks (`<<<<\n====\n>>>>`).
 
-**Special Operations:**
-* **Create File:** Use an empty Original Code block.
-* **Delete File:** Use empty Original AND New Code blocks.
+**Example (Anchoring an insert ~line 20):**
 
+```text
+--- a/src/main.py
+<<<< 16:24
+    x = 1
+====
+    x = 2
+====
+    # This line confirms we are inserting before 'return x'
+    return x
+>>>>
 ```
+
+**Annotation:**
+
+You may optionally precede a block with a line starting with @  to describe the intent of the specific change. This helps with debugging if the patch fails.
+
+**Example:**
+
+````
+--- a/src/main.py
+@ Fixes off-by-one error in loop
+<<<< 16:24
+    x = 1
+====
+    x = 2
+====
+    # This line confirms we are inserting before 'return x'
+    return x
+>>>>
+````
+
+`````
 
 ---
 
