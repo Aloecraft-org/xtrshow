@@ -91,7 +91,9 @@ def parse_multi_file_patch(content, default_target=None):
             continue
 
         # Support ':' or '~' for range hints (e.g., 10:15 or 10~15)
-        block_match = re.match(r'^<<<<\s*(\d+)?(?:[:~](\d+))?', stripped)
+        # ALLOW '<<' (2 brackets) as a start marker, but ONLY if the line ends immediately
+        # after the hint. This prevents matching C++ streams or bitwise shifts like '<< 5;'.
+        block_match = re.match(r'^(?:<<<<|<<)\s*(\d+)?(?:[:~](\d+))?\s*$', stripped)
         
         if block_match:
             block_start_line = i + 1
@@ -411,15 +413,18 @@ def revert_file(target_file):
 def apply_changes(changes_dict, patch_source_path=None):
     """Applies parsed changes to files."""
     for filepath, blocks in changes_dict.items():
-        # Setup logging capture
         log_buffer = []
-        def log(msg):
+        # Store output in buffer to print summary at end of file processing
+        def output(msg):
             print(msg)
             log_buffer.append(str(msg))
-
-        log(f"\nProcessing: {filepath}")
-        version = 0
         
+        # We also maintain a silent buffer for the log file to ensure full detail is preserved
+        # even if we make the console output concise.
+        
+        file_delta_total = 0
+        hunk_stats = []
+
         # --- File Deletion Logic ---
         if os.path.exists(filepath):
             # Trigger: Single block, Empty Search, Empty Replace
@@ -427,17 +432,20 @@ def apply_changes(changes_dict, patch_source_path=None):
                 try:
                     # 1. Backup (Crucial for Undo/Revert)
                     backup_path, version = create_backup(filepath)
-                    if backup_path:
-                        log(f"  (Backup created at {backup_path})")
-                        if patch_source_path:
-                            archive_patch_file(patch_source_path, filepath, version)
+                    if backup_path and patch_source_path:
+                        archive_patch_file(patch_source_path, filepath, version)
                     
                     # 2. Delete
+                    orig_len = 0
+                    try:
+                        with open(filepath, 'r') as f: orig_len = len(f.readlines())
+                    except: pass
+
                     os.remove(filepath)
-                    log(f"  ✓ Deleted file: {filepath}")
+                    output(f"🗑️  {filepath} ... DELETED (Δ-{orig_len} lines)")
                     save_log_file("\n".join(log_buffer), filepath, version)
                 except Exception as e:
-                    log(f"  ✗ Failed to delete file: {e}")
+                    output(f"❌ {filepath} ... FAILED TO DELETE: {e}")
                     save_log_file("\n".join(log_buffer), filepath, version)
                 continue
 
@@ -446,52 +454,58 @@ def apply_changes(changes_dict, patch_source_path=None):
                 try:
                     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
                     new_content = "".join([l + '\n' for l in blocks[0]['replace']])
+                    new_len = len(blocks[0]['replace'])
+                    
+                    # Backup logic (even for new files, we claim version 0)
                     backup_path, version = get_backup_path(Path(filepath), Path.cwd() / ".xtrpatch")
                     backup_path.parent.mkdir(parents=True, exist_ok=True)
                     backup_path.touch()
-                    log(f"  (Backup created at {backup_path})")
+                    
                     if patch_source_path:
-                        # Pass filepath to archive
                         archive_patch_file(patch_source_path, filepath, version)
+                        
                     with open(filepath, 'w') as f:
                         f.write(new_content)
-                    log(f"  ✓ Created new file: {filepath}")
+                        
+                    output(f"✨ {filepath} ... CREATED (Δ+{new_len} lines)")
                     save_log_file("\n".join(log_buffer), filepath, version)
                 except Exception as e:
-                    log(f"  ✗ Failed to create file: {e}")
+                    output(f"❌ {filepath} ... FAILED TO CREATE: {e}")
                     save_log_file("\n".join(log_buffer), filepath, version)
                 continue
             else:
-                log(f"  Error: File {filepath} not found.")
+                output(f"❌ {filepath} ... NOT FOUND (Cannot modify missing file)")
                 continue
 
         # --- Modification Logic ---
         
         # 1. Always Create Backup First (Transaction Start)
         backup_path, version = create_backup(filepath)
-        if backup_path:
-            log(f"  (Backup created at {backup_path})")
-            if patch_source_path:
-                archive_patch_file(patch_source_path, filepath, version)
-        else:
+        if backup_path and patch_source_path:
+            archive_patch_file(patch_source_path, filepath, version)
+        elif not backup_path:
             version = 0
 
         try:
             with open(filepath, 'r') as f:
                 file_lines = f.readlines()
         except Exception as e:
-            log(f"  Error reading file: {e}")
+            output(f"❌ {filepath} ... ERROR READING: {e}")
             continue
 
-        success_count = 0
         error_occurred = False
         
-        for block in blocks:
-            # Print intent if available
-            if block.get('annotation'):
-                log(f"  Patch Annotation: {block['annotation']}")
-
-            match = find_match(file_lines, block['search'], block['hint'])
+        for i, block in enumerate(blocks, 1):
+            hunk_res = {'id': i, 'annotation': block.get('annotation', '')}
+            
+            # Handle Pure Insertion (Empty Search + Line Hint)
+            if not block['search'] and block['hint'] is not None:
+                # Insert at the specific line (0-indexed)
+                # Python slices handle out-of-bounds gracefully (appending)
+                idx = max(0, block['hint'] - 1)
+                match = (idx, idx)
+            else:
+                match = find_match(file_lines, block['search'], block['hint'])
             
             if match:
                 start, end = match
@@ -499,7 +513,7 @@ def apply_changes(changes_dict, patch_source_path=None):
                 # --- Tail Context Verification (Robust) ---
                 valid_match = True
                 if block.get('tail'):
-                    # 1. Normalize expectation: Ignore blank lines in the patch tail
+                    # 1. Normalize expectation
                     norm_tail_block = [normalize(l) for l in block['tail'] if normalize(l)]
                     
                     if norm_tail_block:
@@ -509,24 +523,18 @@ def apply_changes(changes_dict, patch_source_path=None):
                         while tail_idx < len(norm_tail_block):
                             if current_file_idx >= len(file_lines):
                                 valid_match = False
-                                log(f"  ! Tail context mismatch (End of file reached)")
                                 break
                             
                             norm_file = normalize(file_lines[current_file_idx])
                             
-                            # 2. Robustness: Skip blank lines in the file
-                            if not norm_file:
+                            if not norm_file: # Skip blank lines in file
                                 current_file_idx += 1
                                 continue
                                 
-                            # 3. Compare content
                             norm_tail = norm_tail_block[tail_idx]
                             
                             if norm_file != norm_tail:
                                 valid_match = False
-                                log(f"  ! Tail context mismatch at line {current_file_idx + 1}")
-                                log(f"    Expected: {norm_tail}")
-                                log(f"    Found:    {norm_file}")
                                 break
                                 
                             current_file_idx += 1
@@ -535,31 +543,73 @@ def apply_changes(changes_dict, patch_source_path=None):
                 if valid_match:
                     new_lines = [l + '\n' for l in block['replace']]
                     file_lines[start:end] = new_lines
-                    success_count += 1
-                    log(f"  ✓ Applied patch at line {start + 1}")
+                    
+                    # Stats
+                    rep_len = len(block['search'])
+                    new_len = len(block['replace'])
+                    delta = new_len - rep_len
+                    file_delta_total += delta
+                    
+                    hunk_res.update({
+                        'status': 'APPLIED',
+                        'rep': rep_len,
+                        'new': new_len,
+                        'delta': delta
+                    })
                 else:
-                    log(f"  ✗ Skipped block due to context mismatch.")
                     error_occurred = True
+                    hunk_res['status'] = 'BLOCKED'
             else:
-                hint_msg = f"(Hint: {block['hint']})" if block['hint'] else "(No line hint)"
-                
-                
+                # Check if redundant (already applied)
                 already_applied = find_match(file_lines, block['replace'])
                 
-                # Context info for failure
-                note = f" [Goal: {block['annotation']}]" if block.get('annotation') else ""
-
                 if already_applied:
-                    log(f"  ! Skipped: Block from patch line {block['patch_line']} appears to be already applied.{note}")
-                    log(f"    (Found matching replacement code at line {already_applied[0]+1})")
+                    hunk_res['status'] = 'SKIPPED'
                 else:
-                    log(f"  ✗ FAILED to find block from patch line {block['patch_line']} {hint_msg}{note}")
                     error_occurred = True
-                    if block['search']:
-                        preview = block['search'][0].strip()
-                        if len(preview) > 50:
-                            preview = preview[:47] + "..."
-                        log(f"    Searching for: '{preview}'")
+                    hunk_res['status'] = 'FAILED'
+                    hunk_res['hint'] = block['hint']
+
+            hunk_stats.append(hunk_res)
+
+        # --- Generate Report ---
+        
+        # 1. Determine File Status
+        successes = [h for h in hunk_stats if h['status'] == 'APPLIED']
+        fails = [h for h in hunk_stats if h['status'] in ('FAILED', 'BLOCKED')]
+        
+        if not fails and successes:
+             file_icon = "✅ SUCCESS"
+        elif not fails and not successes:
+             file_icon = "⏭️  SKIPPED" # All redundant
+        elif fails and successes:
+             file_icon = "⚠️  PARTIAL"
+        else:
+             file_icon = "❌ FAILED"
+        
+        # 2. Print Header
+        sign = "+" if file_delta_total >= 0 else ""
+        header = f"📄 {filepath:<40} {file_icon} (Δ{sign}{file_delta_total} lines)"
+        output(header)
+        
+        # 3. Print Hunks
+        for h in hunk_stats:
+            desc = f"@ {h['annotation']}" if h['annotation'] else f"Hunk {h['id']}"
+            if len(desc) > 30: desc = desc[:27] + "..."
+            
+            if h['status'] == 'APPLIED':
+                d_sign = "+" if h['delta'] >= 0 else ""
+                meta = f"[Rep: {h['rep']}, New: {h['new']}, Δ{d_sign}{h['delta']}]"
+                line = f"   {h['id']}. ✅ {desc:<32} {meta}"
+            elif h['status'] == 'SKIPPED':
+                line = f"   {h['id']}. 🧠 {desc:<32} [Already Applied]"
+            elif h['status'] == 'BLOCKED':
+                line = f"   {h['id']}. 🛑 {desc:<32} [Tail Context Mismatch]"
+            elif h['status'] == 'FAILED':
+                hint = f"~Line {h['hint']}" if h.get('hint') else "No Hint"
+                line = f"   {h['id']}. ❌ {desc:<32} [Block Not Found] {hint}"
+            
+            output(line)
 
         # Save output log
         save_log_file("\n".join(log_buffer), filepath, version)
@@ -568,12 +618,9 @@ def apply_changes(changes_dict, patch_source_path=None):
         if error_occurred:
             save_error_report(filepath, version, "\n".join(log_buffer))
 
-        if success_count > 0:
+        if successes:
             with open(filepath, 'w') as f:
                 f.writelines(file_lines)
-            log(f"  Saved {success_count} changes.")
-        else:
-            log("  No changes applied.")
 
 def main():
     parser = argparse.ArgumentParser(

@@ -92,4 +92,4 @@ correct_verification
     assert "old_code" in target.read_text()
     
     captured = capsys.readouterr()
-    assert "Tail context mismatch" in captured.out
+    assert "[Tail Context Mismatch]" in captured.out

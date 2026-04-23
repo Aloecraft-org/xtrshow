@@ -9,3 +9,4 @@ x.md
 # xtrpatch backups and archives
 .xtrpatch/
 *.patch
+.xtrshow

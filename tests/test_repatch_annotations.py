@@ -88,8 +88,8 @@ new_code
     captured = capsys.readouterr()
     
     # Check output
-    assert "✓ Applied patch" in captured.out
-    assert "Patch Annotation: Refactoring old code" in captured.out
+    assert "✅ SUCCESS" in captured.out
+    assert "@ Refactoring old code" in captured.out
 
 def test_apply_prints_annotation_on_failure(tmp_path, capsys, monkeypatch):
     """
@@ -119,9 +119,9 @@ new_content
     captured = capsys.readouterr()
     
     # Verify standard failure message
-    assert "FAILED to find block" in captured.out
-    # Verify our annotation is attached to the error
-    assert "[Goal: Adding validation logic]" in captured.out
+    assert "❌ FAILED" in captured.out
+    # Verify our annotation is attached to the error line
+    assert "@ Adding validation logic" in captured.out
 
 def test_multiple_annotations_per_file(tmp_path, capsys, monkeypatch):
     """
@@ -158,8 +158,8 @@ func_b_v2
     captured = capsys.readouterr()
     
     # Check that both annotations were printed
-    assert "Patch Annotation: Update A" in captured.out
-    assert "Patch Annotation: Update B" in captured.out
+    assert "@ Update A" in captured.out
+    assert "@ Update B" in captured.out
     
     # Verify file content
     content = target.read_text()
