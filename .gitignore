@@ -4,9 +4,10 @@ dist/
 build/
 .pytest_cache/
 .coverage
-x.md
+.nogit
 
 # xtrpatch backups and archives
 .xtrpatch/
 *.patch
 .xtrshow
+x.md
