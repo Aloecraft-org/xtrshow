@@ -1,15 +1,20 @@
+# ./tests/test_repatch_tail.py
+# License: Apache-2.0 (disclaimer at bottom of file)
 import os
 import pytest
 from pathlib import Path
 from xtrshow.repatch import apply_changes, parse_multi_file_patch
+
 
 def test_tail_context_success(tmp_path):
     """
     Test that a patch applies when the tail context (lookahead) matches.
     """
     target_file = tmp_path / "main.rs"
-    target_file.write_text("fn main() {\n    let x = 1;\n    let y = 2;\n    println!(\"{}\", x);\n}\n")
-    
+    target_file.write_text(
+        'fn main() {\n    let x = 1;\n    let y = 2;\n    println!("{}", x);\n}\n'
+    )
+
     # Patch: Change x=1 to x=10, BUT only if followed by y=2
     patch_content = f"""
 --- a/{target_file}
@@ -23,11 +28,12 @@ def test_tail_context_success(tmp_path):
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     # Assert: Change was applied
     content = target_file.read_text()
     assert "let x = 10;" in content
     assert "let y = 2;" in content
+
 
 def test_tail_context_mismatch_skips_patch(tmp_path):
     """
@@ -36,7 +42,7 @@ def test_tail_context_mismatch_skips_patch(tmp_path):
     """
     target_file = tmp_path / "config.ini"
     target_file.write_text("[settings]\nversion=1\ndebug=true\n")
-    
+
     # Patch: Change version=1 to version=2
     # Requirement: Must be followed by 'debug=false' (Lookahead)
     # Reality: File has 'debug=true'
@@ -52,11 +58,12 @@ debug=false
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     # Assert: Change was NOT applied because tail matched 'debug=true', not 'false'
     content = target_file.read_text()
     assert "version=1" in content
     assert "version=2" not in content
+
 
 def test_tail_context_eof_safety(tmp_path):
     """
@@ -64,7 +71,7 @@ def test_tail_context_eof_safety(tmp_path):
     """
     target_file = tmp_path / "notes.txt"
     target_file.write_text("End of the file.\n")
-    
+
     # Patch: Replace the last line
     # Requirement: Expects another line "footer" after it.
     patch_content = f"""
@@ -79,9 +86,10 @@ footer
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     # Assert: Skipped because "footer" does not exist (EOF)
     assert "End of the file." in target_file.read_text()
+
 
 def test_fuzzy_tail_matching(tmp_path):
     """
@@ -90,7 +98,7 @@ def test_fuzzy_tail_matching(tmp_path):
     target_file = tmp_path / "code.py"
     # File has weird spacing
     target_file.write_text("def init():\n    pass\n    # comment  \n")
-    
+
     # Patch uses standard spacing in tail
     patch_content = f"""
 --- a/{target_file}
@@ -104,6 +112,19 @@ def test_fuzzy_tail_matching(tmp_path):
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     # Assert: Applied despite whitespace differences in the comment
     assert "return" in target_file.read_text()
+# Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.

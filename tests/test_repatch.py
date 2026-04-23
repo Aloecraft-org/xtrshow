@@ -1,7 +1,10 @@
+# ./tests/test_repatch.py
+# License: Apache-2.0 (disclaimer at bottom of file)
 import pytest
 from xtrshow.repatch import find_match, normalize
 
 # --- Fixtures & Data ---
+
 
 @pytest.fixture
 def sample_file_content():
@@ -21,22 +24,24 @@ def sample_file_content():
         "\n",
         "# Some space\n",
         "def duplicate_func():\n",
-        "    return True\n"
+        "    return True\n",
     ]
 
+
 # --- Unit Tests ---
+
 
 def test_exact_match(sample_file_content):
     """Test 1: It should find an exact match."""
     search_block = [
         "def setup():",
         "    print('Setting up')",
-        "    # Todo: add more setup"
+        "    # Todo: add more setup",
     ]
-    
+
     # Run matcher
     match = find_match(sample_file_content, search_block)
-    
+
     assert match is not None
     start, end = match
     # 'def setup():' is at index 2 in sample_file_content
@@ -44,48 +49,46 @@ def test_exact_match(sample_file_content):
     # The block has 3 lines, so end should be 5
     assert end == 5
 
+
 def test_whitespace_insensitivity(sample_file_content):
     """Test 2: It should match even if indentation differs (LLM error)."""
     # LLM output often uses 2 spaces instead of 4, or forgets indentation
     search_block = [
         "def setup():",
         "  print('Setting up')",  # 2 spaces (file has 4)
-        "    # Todo: add more setup" # 4 spaces
+        "    # Todo: add more setup",  # 4 spaces
     ]
-    
+
     match = find_match(sample_file_content, search_block)
-    
+
     assert match is not None
     assert sample_file_content[match[0]].startswith("def setup")
+
 
 def test_disambiguation_with_hint(sample_file_content):
     """Test 3: It should use the line number hint to pick the right duplicate."""
     # 'duplicate_func' appears at line 10 and line 14 (indices 9 and 13)
-    search_block = [
-        "def duplicate_func():",
-        "    return True"
-    ]
-    
+    search_block = ["def duplicate_func():", "    return True"]
+
     # Case A: Hint near line 10
     match_1 = find_match(sample_file_content, search_block, start_hint=10)
     assert match_1[0] == 9  # 0-indexed
-    
+
     # Case B: Hint near line 15
     match_2 = find_match(sample_file_content, search_block, start_hint=15)
-    assert match_2[0] == 13 # 0-indexed
+    assert match_2[0] == 13  # 0-indexed
+
 
 def test_ambiguity_failure(sample_file_content):
     """Test 4: It should fail (return None) if multiple matches exist with no hint."""
-    search_block = [
-        "def duplicate_func():",
-        "    return True"
-    ]
-    
+    search_block = ["def duplicate_func():", "    return True"]
+
     # No hint provided -> Should detect ambiguity
     match = find_match(sample_file_content, search_block, start_hint=None)
-    
+
     # Expectation: The function prints an error and returns None to avoid damaging code
     assert match is None
+
 
 def test_ignore_empty_lines_in_search(sample_file_content):
     """Test 5: It should ignore blank lines in the search block."""
@@ -93,13 +96,14 @@ def test_ignore_empty_lines_in_search(sample_file_content):
     search_block = [
         "def teardown():",
         "",  # Extra blank line that isn't in the file
-        "    print('Tearing down')"
+        "    print('Tearing down')",
     ]
-    
+
     match = find_match(sample_file_content, search_block)
-    
+
     assert match is not None
     assert sample_file_content[match[0]].startswith("def teardown")
+
 
 def test_skip_file_comments(sample_file_content):
     """Test 6: It should skip over non-matching lines in file to find the block."""
@@ -107,3 +111,16 @@ def test_skip_file_comments(sample_file_content):
     match = find_match(sample_file_content, search_block)
     assert match is not None
     assert match[0] == 6  # index of teardown
+# Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.

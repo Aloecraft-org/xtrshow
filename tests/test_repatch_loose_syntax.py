@@ -1,11 +1,14 @@
+# ./tests/test_repatch_loose_syntax.py
+# License: Apache-2.0 (disclaimer at bottom of file)
 import pytest
 from xtrshow.repatch import parse_multi_file_patch, apply_changes
+
 
 def test_loose_syntax_create_file(tmp_path, monkeypatch):
     """Test that '<<' works for file creation (empty search block)."""
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "loose.py"
-    
+
     # Using '<<' instead of '<<<<'
     patch_content = f"""
 --- a/{target.name}
@@ -16,16 +19,17 @@ print("Created with loose syntax")
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     assert target.exists()
     assert 'print("Created with loose syntax")' in target.read_text()
+
 
 def test_loose_syntax_with_hint(tmp_path, monkeypatch):
     """Test that '<< 10' works."""
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "hint.py"
     target.write_text("line1\nline2\nline3\n")
-    
+
     patch_content = f"""
 --- a/{target.name}
 << 2
@@ -36,8 +40,9 @@ line2_modified
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     assert "line2_modified" in target.read_text()
+
 
 def test_loose_syntax_safeguard_ignores_code(tmp_path, monkeypatch):
     """
@@ -47,7 +52,7 @@ def test_loose_syntax_safeguard_ignores_code(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "safety.cpp"
     target.write_text("int x = 1;\n")
-    
+
     # The line '<< "text"' looks like a marker but has content after it.
     # The regex '$' anchor should reject this.
     patch_content = f"""
@@ -60,13 +65,14 @@ int x = 2;
 >>>>
 """
     changes = parse_multi_file_patch(patch_content)
-    
+
     # If the parser was too loose, it would find changes. It should find none.
     if changes:
         apply_changes(changes)
-        
+
     assert "int x = 1;" in target.read_text()
     assert "int x = 2;" not in target.read_text()
+
 
 def test_loose_syntax_requires_strict_closing(tmp_path, monkeypatch):
     """
@@ -76,7 +82,7 @@ def test_loose_syntax_requires_strict_closing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "strict_close.py"
     target.write_text("old\n")
-    
+
     # Invalid patch: uses '>>' instead of '>>>>'
     patch_content = f"""
 --- a/{target.name}
@@ -87,10 +93,23 @@ new
 >>
 """
     changes = parse_multi_file_patch(patch_content)
-    
-    # The parser logic consumes lines looking for '>>>>'. 
-    # If it hits EOF without finding '>>>>', the block is usually discarded 
+
+    # The parser logic consumes lines looking for '>>>>'.
+    # If it hits EOF without finding '>>>>', the block is usually discarded
     # or treated as incomplete depending on implementation details.
     # In current implementation, if it doesn't find '>>>>', the block isn't added to `changes`.
-    
+
     assert target.name not in changes or len(changes[target.name]) == 0
+# Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.

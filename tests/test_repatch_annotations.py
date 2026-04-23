@@ -1,5 +1,8 @@
+# ./tests/test_repatch_annotations.py
+# License: Apache-2.0 (disclaimer at bottom of file)
 import pytest
 from xtrshow.repatch import parse_multi_file_patch, apply_changes
+
 
 def test_parse_annotation():
     """
@@ -10,7 +13,7 @@ def test_parse_annotation():
     START = "<" * 4
     MID = "=" * 4
     END = ">" * 4
-    
+
     patch_content = f"""
 --- a/src/logic.py
 @ Fix off-by-one error in loop
@@ -21,10 +24,11 @@ for i in range(11):
 {END}
 """
     changes = parse_multi_file_patch(patch_content)
-    
-    assert 'src/logic.py' in changes
-    block = changes['src/logic.py'][0]
-    assert block['annotation'] == "Fix off-by-one error in loop"
+
+    assert "src/logic.py" in changes
+    block = changes["src/logic.py"][0]
+    assert block["annotation"] == "Fix off-by-one error in loop"
+
 
 def test_annotation_reset_between_blocks():
     """
@@ -51,23 +55,24 @@ B_Prime
 {END}
 """
     changes = parse_multi_file_patch(patch_content)
-    blocks = changes['file.py']
-    
+    blocks = changes["file.py"]
+
     # First block should have the annotation
-    assert blocks[0]['annotation'] == "Change A"
-    
+    assert blocks[0]["annotation"] == "Change A"
+
     # Second block should have NO annotation (None)
-    assert blocks[1]['annotation'] is None
+    assert blocks[1]["annotation"] is None
+
 
 def test_apply_prints_annotation_on_success(tmp_path, capsys, monkeypatch):
     """
-    Verify that the tool prints the annotation ("Goal: ...") when 
+    Verify that the tool prints the annotation ("Goal: ...") when
     successfully applying a patch.
     """
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "success.py"
     target.write_text("old_code\n")
-    
+
     START = "<" * 4
     MID = "=" * 4
     END = ">" * 4
@@ -83,13 +88,14 @@ new_code
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     # Capture stdout
     captured = capsys.readouterr()
-    
+
     # Check output
     assert "✅ SUCCESS" in captured.out
     assert "@ Refactoring old code" in captured.out
+
 
 def test_apply_prints_annotation_on_failure(tmp_path, capsys, monkeypatch):
     """
@@ -99,7 +105,7 @@ def test_apply_prints_annotation_on_failure(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "fail.py"
     target.write_text("mismatch_content\n")
-    
+
     START = "<" * 4
     MID = "=" * 4
     END = ">" * 4
@@ -115,23 +121,24 @@ new_content
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     captured = capsys.readouterr()
-    
+
     # Verify standard failure message
     assert "❌ FAILED" in captured.out
     # Verify our annotation is attached to the error line
     assert "@ Adding validation logic" in captured.out
 
+
 def test_multiple_annotations_per_file(tmp_path, capsys, monkeypatch):
     """
-    Verify that we can have multiple patches in one file, each with 
+    Verify that we can have multiple patches in one file, each with
     its own specific annotation (Goal), and they don't overwrite each other.
     """
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "multi.py"
     target.write_text("func_a\n\nfunc_b\n")
-    
+
     START = "<" * 4
     MID = "=" * 4
     END = ">" * 4
@@ -154,14 +161,27 @@ func_b_v2
 """
     changes = parse_multi_file_patch(patch_content)
     apply_changes(changes)
-    
+
     captured = capsys.readouterr()
-    
+
     # Check that both annotations were printed
     assert "@ Update A" in captured.out
     assert "@ Update B" in captured.out
-    
+
     # Verify file content
     content = target.read_text()
     assert "func_a_v2" in content
     assert "func_b_v2" in content
+# Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
