@@ -2,7 +2,7 @@
 
 **xtrshow** and **xtrpatch** are designed to work with *any* Large Language Model (ChatGPT, Claude, Gemini, DeepSeek, etc.).
 
-However, LLMs are trained to output standard `diff` files or just rewrite whole files by default. To make `xtrpatch` work, you need to instruct the model to use the **Search and Replace Block** format.
+However, LLMs default to outputting standard `diff` files or rewriting whole files. To make `xtrpatch` work, instruct the model to use the **Search and Replace Block** format below.
 
 ---
 
@@ -15,94 +15,84 @@ First, get your code into the LLM's context window.
 3.  Press `Enter` to output the formatted text.
 4.  **Copy and Paste** the output directly into your chat prompt.
 
-> **Tip:** On macOS, you can pipe directly to the clipboard:
+> **Tip:** On macOS/Linux, pipe directly to the clipboard:
 > `xtrshow | pbcopy`
+>
+> Working on the same fileset again later? Re-export without reselecting:
+> `xtrshow --update`
 
+---
 
-## 2. The "Magic" Instruction
+## 2. Prompt for LLMs
 
-When you ask for changes, you must tell the LLM **how** to format the code so `xtrpatch` can read it.
-
-**Copy and paste the following block into your prompt (or save it as a Custom Instruction/System Prompt):**
+Tell the LLM **how** to format its output so `xtrpatch` can read it. Copy the block below into your prompt (or save it as a Custom Instruction / System Prompt):
 
 `````md
 **Instruction: Code Modification Format**
 
-Please provide all code changes using the **Multi-File Search and Replace Block** format.
-**CRITICAL:** Wrap your *entire* output in **quadruple backticks** (````) to prevent rendering errors.
-
-**Syntax:**
+Output all changes as **Search/Replace Blocks**, wrapped entirely in **quadruple backticks** (````) to avoid rendering errors.
 
 ```text
---- a/path/to/target_file.py
-@ patch annotation describing modification
+--- a/path/to/file.py
+@ optional: describe the change
 <<<< LINE_HINT
-[Original Code Block]
+[code to find]
 ====
-[New Code Block]
+[code to replace it with]
 ====
-[Optional: Tail Context]
+[optional tail: line that must follow the match]
 >>>>
-
 ```
-**Rules:**
 
-1. **Header:** `--- a/path/to/file`.
-2. **Path Resolution:** If source code is provided in a single dump (e.g. `x.md`), use the **actual file path** found *inside* the text (e.g. `src/utils.py`), not the container filename.
-3. **Start:** `<<<<` followed by a line number hint (e.g., `<<<< 50`). This is a fuzzy anchor; rely on the content match for precision.
-4. **Search:** Copy the *exact* original code to replace. No comments or placeholders.
-5. **Replace:** The new code to insert.
-6. **Tail Context (Optional):** Use a second `====` divider to provide 1-2 lines of code that must exist *immediately after* the replacement. Use this to anchor small inserts without quoting large blocks.
-7. **End:** `>>>>`.
+**Anchoring — this is what prevents failures:**
+- Anchor on stable lines: function/class signatures, unique declarations. Avoid anchoring on comments, strings, or blanks — they drift between context and edit time.
+- Don't copy whole functions. Anchor the first line, `~~~~` to skip the volatile middle, anchor a closing line:
+
+```text
+<<<< 40
+def process(items):
+~~~~
+    return result
+====
+def process(items, timeout=30):
+    return result
+>>>>
+```
+
+- `~~~~` skips any number of lines; `~~~~5` up to 5; `~~~~=5` exactly 5. Search side only.
+- Keep the search block as small as stays unique. If a block appears twice, add a neighboring line or set `LINE_HINT` to disambiguate.
+- Indentation is normalized — don't fret exact whitespace.
+- `LINE_HINT` (e.g. `<<<< 50` or `<<<< 50:60`) is a fuzzy nudge; the content match decides.
+- Path: use the real path found inside a code dump (e.g. `src/utils.py`), not the container filename.
 
 **Operations:**
+- **Modify:** search + replace.
+- **Insert:** empty search + line hint (`<<<< 20`); add a tail line to anchor the spot.
+- **Create file:** empty search block.
+- **Delete section:** real search + empty replace.
+- **Delete file:** `! DELETE FILE` on its own line (no block needed).
 
-* **Modify:** Provide Search and Replace blocks. Ensure the Search block is unique.
-* **Create:** Empty Search block (`<<<<\n====`).
-* **Delete:** Empty Search AND Replace blocks (`<<<<\n====\n>>>>`).
-
-**Example (Anchoring an insert ~line 20):**
+**Tail context** pins what must come *immediately after* a match — useful to place an edit precisely when the search alone is ambiguous:
 
 ```text
---- a/src/main.py
-<<<< 16:24
-    x = 1
+--- a/config.ini
+<<<<
+version = 1
 ====
-    x = 2
+version = 2
 ====
-    # This line confirms we are inserting before 'return x'
-    return x
+debug = True
 >>>>
 ```
-
-**Annotation:**
-
-You may optionally precede a block with a line starting with @  to describe the intent of the specific change. This helps with debugging if the patch fails.
-
-**Example:**
-
-````
---- a/src/main.py
-@ Fixes off-by-one error in loop
-<<<< 16:24
-    x = 1
-====
-    x = 2
-====
-    # This line confirms we are inserting before 'return x'
-    return x
->>>>
-````
-
 `````
 
 ---
 
 ## 3. Format Reference
 
-If the LLM is struggling, you can provide these examples to help it calibrate.
+Quick reference for each operation.
 
-### Standard Modification
+### Modify
 ```text
 --- a/src/main.py
 <<<< 10
@@ -112,11 +102,33 @@ def hello():
 def hello():
     print("New")
 >>>>
-
 ```
 
-### File Creation
+### Wildcard (skip volatile interior)
+```text
+--- a/src/main.py
+<<<< 10
+def hello(name):
+~~~~
+    return greeting
+====
+def hello(name, formal=False):
+    return greeting
+>>>>
+```
 
+### Insert (empty search + hint + tail)
+```text
+--- a/src/main.py
+<<<< 16
+====
+    x = 2
+====
+    return x
+>>>>
+```
+
+### Create File
 ```text
 --- a/src/new_helper.py
 <<<<
@@ -124,34 +136,21 @@ def hello():
 def help_me():
     return True
 >>>>
-
 ```
 
-### File Deletion
+### Delete Section
+```text
+--- a/src/main.py
+<<<<
+    deprecated_call()
+====
+>>>>
+```
 
+### Delete File
 ```text
 --- a/src/deprecated.py
-<<<<
-====
->>>>
-
-```
-
-### Advanced: Tail Context (Lookahead)
-
-If you need to ensure a patch is applied in a specific location (e.g., distinguishing between two identical lines), you can add a **Tail Context** block using a second separator.
-
-```text
---- a/config.ini
-<<<<
-version = 1
-====
-version = 2
-====
-# This line must exist immediately AFTER the block for the patch to apply
-debug = True
->>>>
-
+! DELETE FILE
 ```
 
 ---
@@ -160,7 +159,7 @@ debug = True
 
 If you use Google Gemini or ChatGPT frequently, you can bake these instructions into a persistent "Persona" or "Gem."
 
-We have provided a comprehensive Developer Protocol designed specifically for Gemini, which includes:
+We provide a comprehensive Developer Protocol designed for Gemini, including:
 
 * State Management (Planning vs. Implementing)
 * Output Protocols (Scratchpads, Memos)

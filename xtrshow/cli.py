@@ -52,9 +52,9 @@ from pathlib import Path
 
 # Default ignore patterns
 DEFAULT_IGNORE = {
-    # 'node_modules', '.git', '__pycache__', '.venv', 'venv',
-    # '.env', '.pytest_cache', '.mypy_cache', '.tox', 'dist',
-    # 'build', '.egg-info', '.eggs', 'target', '.idea', '.vscode'
+    'node_modules', '.git', '__pycache__', '.venv', 'venv',
+    '.env', '.pytest_cache', '.mypy_cache', '.tox', 'dist',
+    'build', '.egg-info', '.eggs', 'target', '.idea', '.vscode'
 }
 
 
@@ -96,7 +96,7 @@ class FileNode:
             if self.is_dir:
                 return 0
             return self.path.stat().st_size
-        except:
+        except Exception:
             return 0
 
 
@@ -407,6 +407,11 @@ def main():
         metavar="DIR",
         help="Output individual files to directory (default: .xtrshow)",
     )
+    parser.add_argument(
+        "--update", "-u",
+        action="store_true",
+        help="Re-export previously selected files from .xtrshow_manifest without launching TUI",
+    )
 
     args = parser.parse_args()
 
@@ -434,12 +439,29 @@ def main():
         print(f"Error: Could not read directory '{args.directory}'", file=sys.stderr)
         sys.exit(1)
 
-    # Run the TUI
+    MANIFEST_PATH = Path(".xtrshow_manifest")
+
+    # Run the TUI (or load manifest for --update)
     try:
-        result = curses.wrapper(main_curses, root_node, hidden_count)
+        if args.update:
+            if not MANIFEST_PATH.exists():
+                print(
+                    "Error: No .xtrshow_manifest found. Run xtrshow normally first to create one.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            result = [l for l in MANIFEST_PATH.read_text().splitlines() if l.strip()]
+            if not result:
+                print("Error: .xtrshow_manifest is empty.", file=sys.stderr)
+                sys.exit(1)
+            print(f"Updating {len(result)} file(s) from manifest...", file=sys.stderr)
+        else:
+            result = curses.wrapper(main_curses, root_node, hidden_count)
 
         if result is not None:
-            # Print selected files to stdout
+            # Save manifest after a fresh TUI selection
+            if not args.update:
+                MANIFEST_PATH.write_text("\n".join(result) + "\n")
 
             output = []
             multi_dir = None
