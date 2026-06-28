@@ -2,7 +2,7 @@
 # License: Apache-2.0 (disclaimer at bottom of file)
 """xtrshow - Interactive file tree selector for LLM workflows"""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

@@ -168,7 +168,11 @@ def find_match(file_lines, search_lines, start_hint=None):
 
     # Determine candidate start positions
     if norm_first:
-        starts = [i for i in range(len(file_lines)) if normalize(file_lines[i]) == norm_first[0]]
+        starts = [
+            i
+            for i in range(len(file_lines))
+            if normalize(file_lines[i]) == norm_first[0]
+        ]
     else:
         # Search block starts with a wildcard — every line is a candidate start
         starts = list(range(len(file_lines)))
@@ -189,7 +193,9 @@ def find_match(file_lines, search_lines, start_hint=None):
             next_seg_lines = segments[seg_idx + 1][0]
 
             # Advance past the wildcard to find the next segment
-            file_idx = _match_wildcard(file_lines, file_idx, next_seg_lines, max_skip, exact)
+            file_idx = _match_wildcard(
+                file_lines, file_idx, next_seg_lines, max_skip, exact
+            )
             if file_idx is None:
                 ok = False
                 break
@@ -253,14 +259,16 @@ def parse_multi_file_patch(content, default_target=None):
             if current_file:
                 if current_file not in changes:
                     changes[current_file] = []
-                changes[current_file].append({
-                    "patch_line": i + 1,
-                    "hint": None,
-                    "search": [],
-                    "replace": [],
-                    "tail": [],
-                    "annotation": current_annotation or "Delete file",
-                })
+                changes[current_file].append(
+                    {
+                        "patch_line": i + 1,
+                        "hint": None,
+                        "search": [],
+                        "replace": [],
+                        "tail": [],
+                        "annotation": current_annotation or "Delete file",
+                    }
+                )
                 current_annotation = None
             i += 1
             continue
@@ -331,6 +339,7 @@ def parse_multi_file_patch(content, default_target=None):
 def _compute_checksum(filepath):
     """Compute SHA256 checksum of a file."""
     import hashlib
+
     sha256 = hashlib.sha256()
     with open(filepath, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -369,7 +378,7 @@ def _verify_checksum(filepath):
             # Check for versioned ones (e.g. .1.orig.sha256)
             versioned = sorted(
                 backup_dir.glob(filename + ".*.orig.sha256"),
-                key=lambda p: int(p.name.split(".")[-3])
+                key=lambda p: int(p.name.split(".")[-3]),
             )
             if versioned:
                 checksum_path = versioned[-1]
@@ -537,8 +546,6 @@ def save_error_report(target_filepath, version_index, log_content):
         print(f"  ! Warning: Failed to generate error report: {e}")
 
 
-
-
 def revert_file(target_file):
     """Reverts the file to its most recent backup."""
     try:
@@ -612,9 +619,7 @@ def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buf
         new_content = "".join([l + "\n" for l in blocks[0]["replace"]])
         new_len = len(blocks[0]["replace"])
 
-        backup_path, version = get_backup_path(
-            Path(filepath), Path.cwd() / ".xtrpatch"
-        )
+        backup_path, version = get_backup_path(Path(filepath), Path.cwd() / ".xtrpatch")
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         backup_path.touch()
 
@@ -652,8 +657,8 @@ def _detect_conflicts(blocks, file_lines):
             for prev_i, prev_start, prev_end in resolved:
                 if start < prev_end and end > prev_start:
                     print(
-                        f"  ⚠️  Conflict: Block {i} (lines {start+1}-{end}) overlaps "
-                        f"Block {prev_i} (lines {prev_start+1}-{prev_end}). Block {i} will be skipped."
+                        f"  ⚠️  Conflict: Block {i} (lines {start + 1}-{end}) overlaps "
+                        f"Block {prev_i} (lines {prev_start + 1}-{prev_end}). Block {i} will be skipped."
                     )
                     conflicts.add(i)
                     break
@@ -691,9 +696,7 @@ def _process_hunks(file_lines, blocks):
             valid_match = True
 
             if block.get("tail"):
-                norm_tail_block = [
-                    normalize(l) for l in block["tail"] if normalize(l)
-                ]
+                norm_tail_block = [normalize(l) for l in block["tail"] if normalize(l)]
                 if norm_tail_block:
                     current_file_idx = end
                     tail_idx = 0
@@ -720,12 +723,14 @@ def _process_hunks(file_lines, blocks):
                 delta = new_len - rep_len
                 file_delta_total += delta
 
-                hunk_res.update({
-                    "status": "APPLIED",
-                    "rep": rep_len,
-                    "new": new_len,
-                    "delta": delta,
-                })
+                hunk_res.update(
+                    {
+                        "status": "APPLIED",
+                        "rep": rep_len,
+                        "new": new_len,
+                        "delta": delta,
+                    }
+                )
             else:
                 error_occurred = True
                 hunk_res["status"] = "BLOCKED"
@@ -804,7 +809,9 @@ def apply_changes(changes_dict, patch_source_path=None):
         # --- File Creation ---
         if not os.path.exists(filepath):
             if len(blocks) == 1 and not blocks[0]["search"]:
-                _apply_file_creation(filepath, blocks, patch_source_path, output, log_buffer)
+                _apply_file_creation(
+                    filepath, blocks, patch_source_path, output, log_buffer
+                )
                 continue
             else:
                 output(f"❌ {filepath} ... NOT FOUND (Cannot modify missing file)")
@@ -825,13 +832,17 @@ def apply_changes(changes_dict, patch_source_path=None):
             output(f"❌ {filepath} ... ERROR READING: {e}")
             continue
 
-        error_occurred, file_delta_total, hunk_stats = _process_hunks(file_lines, blocks)
+        error_occurred, file_delta_total, hunk_stats = _process_hunks(
+            file_lines, blocks
+        )
 
         _print_hunk_report(hunk_stats, file_delta_total, filepath, output)
 
         save_log_file("\n".join(log_buffer), filepath, version)
 
-        error_occurred = any(h["status"] in ("FAILED", "BLOCKED", "CONFLICT") for h in hunk_stats)
+        error_occurred = any(
+            h["status"] in ("FAILED", "BLOCKED", "CONFLICT") for h in hunk_stats
+        )
         if error_occurred:
             save_error_report(filepath, version, "\n".join(log_buffer))
 

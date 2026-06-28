@@ -71,6 +71,8 @@ def test_versioned_backups_and_archives(tmp_path):
     archive_v1 = project_dir / ".xtrpatch" / "script.py.1.patch"
     assert archive_v1.exists()
     assert archive_v1.read_text() == patch_2.read_text()
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

@@ -16,6 +16,7 @@ from xtrshow.repatch import (
 # Checksum helpers
 # ---------------------------------------------------------------------------
 
+
 def test_compute_checksum(tmp_path):
     """SHA256 output matches hashlib directly."""
     f = tmp_path / "data.txt"
@@ -34,7 +35,18 @@ def test_backup_creates_sha256(tmp_path):
     target = project_dir / "app.py"
     target.write_text("v1\n")
 
-    changes = {"app.py": [{"hint": None, "search": ["v1"], "replace": ["v2"], "tail": [], "annotation": None, "patch_line": 1}]}
+    changes = {
+        "app.py": [
+            {
+                "hint": None,
+                "search": ["v1"],
+                "replace": ["v2"],
+                "tail": [],
+                "annotation": None,
+                "patch_line": 1,
+            }
+        ]
+    }
     apply_changes(changes)
 
     backup = project_dir / ".xtrpatch" / "app.py.orig"
@@ -53,7 +65,18 @@ def test_verify_checksum_passes_when_unchanged(tmp_path):
     target = project_dir / "mod.py"
     target.write_text("original\n")
 
-    changes = {"mod.py": [{"hint": None, "search": ["original"], "replace": ["patched"], "tail": [], "annotation": None, "patch_line": 1}]}
+    changes = {
+        "mod.py": [
+            {
+                "hint": None,
+                "search": ["original"],
+                "replace": ["patched"],
+                "tail": [],
+                "annotation": None,
+                "patch_line": 1,
+            }
+        ]
+    }
     apply_changes(changes)
 
     # File is now "patched\n"; checksum was taken of original before the patch.
@@ -83,7 +106,18 @@ def test_verify_checksum_warns_on_external_edit(tmp_path, capsys):
     target = project_dir / "warn.py"
     target.write_text("original\n")
 
-    changes = {"warn.py": [{"hint": None, "search": ["original"], "replace": ["patched"], "tail": [], "annotation": None, "patch_line": 1}]}
+    changes = {
+        "warn.py": [
+            {
+                "hint": None,
+                "search": ["original"],
+                "replace": ["patched"],
+                "tail": [],
+                "annotation": None,
+                "patch_line": 1,
+            }
+        ]
+    }
     apply_changes(changes)
 
     # Simulate external edit AFTER patching
@@ -99,6 +133,7 @@ def test_verify_checksum_warns_on_external_edit(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 # Block conflict detection
 # ---------------------------------------------------------------------------
+
 
 def test_no_conflict_non_overlapping(tmp_path, monkeypatch):
     """Two blocks targeting different lines should both apply cleanly."""
@@ -199,13 +234,29 @@ def test_detect_conflicts_direct(tmp_path):
     file_lines = ["line1\n", "line2\n", "line3\n"]
 
     blocks = [
-        {"search": ["line1"], "hint": None, "replace": ["x"], "tail": [], "annotation": None, "patch_line": 1},
-        {"search": ["line1"], "hint": None, "replace": ["y"], "tail": [], "annotation": None, "patch_line": 5},
+        {
+            "search": ["line1"],
+            "hint": None,
+            "replace": ["x"],
+            "tail": [],
+            "annotation": None,
+            "patch_line": 1,
+        },
+        {
+            "search": ["line1"],
+            "hint": None,
+            "replace": ["y"],
+            "tail": [],
+            "annotation": None,
+            "patch_line": 5,
+        },
     ]
 
     conflicts = _detect_conflicts(blocks, file_lines)
-    assert 2 in conflicts   # second block conflicts
+    assert 2 in conflicts  # second block conflicts
     assert 1 not in conflicts  # first block is fine
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

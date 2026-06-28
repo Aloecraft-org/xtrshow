@@ -84,6 +84,8 @@ def test_multi_skips_creation_on_error(tmp_path, monkeypatch):
     # Should print error to stderr and NOT crash
     # And definitely not write files
     assert not (tmp_path / "blocked").is_dir()
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

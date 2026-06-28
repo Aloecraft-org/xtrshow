@@ -98,6 +98,8 @@ correct_verification
 
     captured = capsys.readouterr()
     assert "[Tail Context Mismatch]" in captured.out
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

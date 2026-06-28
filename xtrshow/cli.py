@@ -52,9 +52,22 @@ from pathlib import Path
 
 # Default ignore patterns
 DEFAULT_IGNORE = {
-    'node_modules', '.git', '__pycache__', '.venv', 'venv',
-    '.env', '.pytest_cache', '.mypy_cache', '.tox', 'dist',
-    'build', '.egg-info', '.eggs', 'target', '.idea', '.vscode'
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".env",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".tox",
+    "dist",
+    "build",
+    ".egg-info",
+    ".eggs",
+    "target",
+    ".idea",
+    ".vscode",
 }
 
 
@@ -408,7 +421,8 @@ def main():
         help="Output individual files to directory (default: .xtrshow)",
     )
     parser.add_argument(
-        "--update", "-u",
+        "--update",
+        "-u",
         action="store_true",
         help="Re-export previously selected files from .xtrshow_manifest without launching TUI",
     )

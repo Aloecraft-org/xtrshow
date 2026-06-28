@@ -61,6 +61,8 @@ New Text
 
     # We can't easily assert the print output of apply_changes without a file system,
     # but since we verified the metadata is correct, the print logic will work.
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

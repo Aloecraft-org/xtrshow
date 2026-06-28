@@ -100,6 +100,8 @@ new
     # In current implementation, if it doesn't find '>>>>', the block isn't added to `changes`.
 
     assert target.name not in changes or len(changes[target.name]) == 0
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

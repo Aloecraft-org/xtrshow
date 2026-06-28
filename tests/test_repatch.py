@@ -111,6 +111,8 @@ def test_skip_file_comments(sample_file_content):
     match = find_match(sample_file_content, search_block)
     assert match is not None
     assert match[0] == 6  # index of teardown
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

@@ -172,6 +172,8 @@ func_b_v2
     content = target.read_text()
     assert "func_a_v2" in content
     assert "func_b_v2" in content
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

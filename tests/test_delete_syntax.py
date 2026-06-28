@@ -128,6 +128,8 @@ def test_old_empty_block_delete_still_works(tmp_path):
     apply_changes(changes)
 
     assert not target.exists()
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

@@ -105,6 +105,8 @@ v2
     # del.py should be deleted
     assert not file_del.exists()
     assert (project_dir / ".xtrpatch" / "del.py.orig").exists()
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

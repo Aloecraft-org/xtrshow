@@ -76,6 +76,8 @@ def test_backup_nested_structure(tmp_path):
     backup_file = project_dir / ".xtrpatch" / "a" / "b" / "c" / "script.py.orig"
     assert backup_file.exists()
     assert backup_file.read_text() == "old_content"
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

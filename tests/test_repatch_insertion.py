@@ -76,6 +76,8 @@ footer
 
     content = target.read_text()
     assert content.strip().endswith("footer")
+
+
 # Copyright Michael Godfrey 2026 | aloecraft.org <michael@aloecraft.org>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
