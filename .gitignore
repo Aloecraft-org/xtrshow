@@ -6,8 +6,7 @@ build/
 .coverage
 .nogit
 
-# xtrpatch backups and archives
-.xtrpatch/
+.xtrpatch*
+.xtrshow*
 *.patch
-.xtrshow
 x.md

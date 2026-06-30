@@ -426,8 +426,23 @@ def main():
         action="store_true",
         help="Re-export previously selected files from .xtrshow_manifest without launching TUI",
     )
+    parser.add_argument(
+        "--prompt",
+        "-p",
+        action="store_true",
+        help="Print the LLM prompting instructions and exit",
+    )
 
     args = parser.parse_args()
+
+    if args.prompt:
+        prompt_path = Path(__file__).parent / "assets" / "llm_prompt.md"
+        try:
+            print(prompt_path.read_text())
+        except FileNotFoundError:
+            print(f"Error: prompt file not found at {prompt_path}", file=sys.stderr)
+            sys.exit(1)
+        return
 
     if args.outfile:
         directory = os.path.dirname(args.outfile) or "."
