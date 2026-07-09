@@ -155,7 +155,7 @@ def render_item(kind, name, sig, doc, badge=None):
 </section>"""
 
 
-def render_module_page(mod_name, info, all_modules):
+def render_module_page(project_title, mod_name, info, all_modules):
     sidebar = "\n".join(
         f'<a href="{m}.html"{' style="font-weight:600"' if m == mod_name else ""}>{html.escape(m)}</a>'
         for m in all_modules
@@ -187,12 +187,14 @@ def render_module_page(mod_name, info, all_modules):
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <title>{html.escape(mod_name)}</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
 <div class="layout">
 <nav class="sidebar">
+<h1>{html.escape(project_title)}</h1>
 <a class="back" href="/"><strong>&larr; Documentation Home</strong></a>
 <h2>Modules</h2>
 {sidebar}
@@ -219,12 +221,14 @@ def render_index(project_title, all_modules, readme_html=None):
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <title>{html.escape(project_title)}</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="layout">
 <nav class="sidebar">
+<h1>{html.escape(project_title)}</h1>
 <a class="back" href="/"><strong>Documentation Home</strong></a>
 <h2>Modules</h2>
 {sidebar}
@@ -306,7 +310,7 @@ def main():
         render_index(args.title, mod_names, readme_html), encoding="utf-8"
     )
     for mod_name, info in modules.items():
-        page = render_module_page(mod_name, info, mod_names)
+        page = render_module_page(args.title, mod_name, info, mod_names)
         (modules_dir / f"{mod_name}.html").write_text(page, encoding="utf-8")
 
     print(

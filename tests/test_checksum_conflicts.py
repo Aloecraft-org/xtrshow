@@ -79,10 +79,10 @@ def test_verify_checksum_passes_when_unchanged(tmp_path):
     }
     apply_changes(changes)
 
-    # File is now "patched\n"; checksum was taken of original before the patch.
-    # A second verify should detect the file differs from the saved checksum.
+    # File is now "patched\n"; a state checksum of the PATCHED content was
+    # saved after applying. No external edit happened, so verify passes.
     result = _verify_checksum("mod.py")
-    assert result is False  # file changed from what was backed up
+    assert result is True  # untouched since last patch -> clean
 
 
 def test_verify_checksum_no_backup_returns_true(tmp_path):

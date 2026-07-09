@@ -33,7 +33,6 @@
 
 **Worked Example (this is what a real response looks like):**
 
-``````
 ````
 --- a/a.py
 @ Add timeout to foo
@@ -84,10 +83,10 @@ i = builder.create_i() \
     .build()
 >>>>
 ````
-``````
+
 
 Worked Example Notes:
-
+- quadruple backticks ARE part of the example, but are NOT part of the patch format. Their function is to ensure that patch renders properly to LLM response window
 - search blocks must be an exact match (careful for whitespace and comments)
 - each hunk has a comment explaining the change
 - response is wrapped in quadruple backticks

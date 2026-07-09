@@ -356,36 +356,40 @@ def _save_checksum(backup_path):
         print(f"  ! Warning: Failed to save checksum: {e}")
 
 
+def _state_checksum_path(filepath):
+    """Path of the .last.sha256 file recording the post-patch state."""
+    src = Path(filepath).resolve()
+    try:
+        rel_path = src.relative_to(Path.cwd())
+    except ValueError:
+        rel_path = Path(src.name)
+    backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
+    return backup_dir / (rel_path.name + ".last.sha256")
+
+
+def _save_state_checksum(filepath):
+    """Record the checksum of the file as it exists NOW (post-patch)."""
+    try:
+        dest = _state_checksum_path(filepath)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(_compute_checksum(filepath))
+    except Exception as e:
+        print(f"  ! Warning: Failed to save state checksum: {e}")
+
+
 def _verify_checksum(filepath):
     """
-    Check whether filepath still matches the checksum saved from the last backup.
-    Returns True if no checksum exists (first patch) or if they match.
-    Returns False and prints a warning if they diverge.
+    Check whether filepath still matches the post-patch state checksum
+    saved after the last successful patch. Returns True if no state has
+    been recorded yet (first patch) or if they match. Returns False and
+    prints a warning if the file was edited externally in between.
     """
     try:
-        src = Path(filepath).resolve()
-        try:
-            rel_path = src.relative_to(Path.cwd())
-        except ValueError:
-            rel_path = Path(src.name)
+        state_path = _state_checksum_path(filepath)
+        if not state_path.exists():
+            return True  # No prior recorded state, nothing to verify
 
-        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
-        filename = rel_path.name
-
-        # Find the highest-versioned .sha256 that exists
-        checksum_path = backup_dir / (filename + ".orig.sha256")
-        if not checksum_path.exists():
-            # Check for versioned ones (e.g. .1.orig.sha256)
-            versioned = sorted(
-                backup_dir.glob(filename + ".*.orig.sha256"),
-                key=lambda p: int(p.name.split(".")[-3]),
-            )
-            if versioned:
-                checksum_path = versioned[-1]
-            else:
-                return True  # No prior backup, nothing to verify
-
-        expected = checksum_path.read_text().strip()
+        expected = state_path.read_text().strip()
         actual = _compute_checksum(filepath)
         if actual != expected:
             print(f"  ⚠️  {filepath} has been modified externally since last patch.")
@@ -593,6 +597,7 @@ def revert_file(target_file):
 
 def _apply_file_deletion(filepath, patch_source_path, output_fn, log_buffer):
     """Handle file deletion (empty search + empty replace)."""
+    version = 0
     try:
         backup_path, version = create_backup(filepath)
         if backup_path and patch_source_path:
@@ -606,6 +611,10 @@ def _apply_file_deletion(filepath, patch_source_path, output_fn, log_buffer):
             pass
 
         os.remove(filepath)
+        try:
+            _state_checksum_path(filepath).unlink(missing_ok=True)
+        except Exception:
+            pass
         output_fn(f"🗑️  {filepath} ... DELETED (Δ-{orig_len} lines)")
         save_log_file("\n".join(log_buffer), filepath, version)
     except Exception as e:
@@ -615,6 +624,7 @@ def _apply_file_deletion(filepath, patch_source_path, output_fn, log_buffer):
 
 def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buffer):
     """Handle file creation (empty search, non-empty replace)."""
+    version = 0
     try:
         new_content = "".join([l + "\n" for l in blocks[0]["replace"]])
         new_len = len(blocks[0]["replace"])
@@ -630,6 +640,7 @@ def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buf
         with open(filepath, "w") as f:
             f.write(new_content)
 
+        _save_state_checksum(filepath)
         output_fn(f"✨ {filepath} ... CREATED (Δ+{new_len} lines)")
         save_log_file("\n".join(log_buffer), filepath, version)
     except Exception as e:
@@ -808,6 +819,13 @@ def apply_changes(changes_dict, patch_source_path=None):
 
         # --- File Creation ---
         if not os.path.exists(filepath):
+            if (
+                len(blocks) == 1
+                and not blocks[0]["search"]
+                and not blocks[0]["replace"]
+            ):
+                output(f"⏭️  {filepath} ... ALREADY ABSENT (nothing to delete)")
+                continue
             if len(blocks) == 1 and not blocks[0]["search"]:
                 _apply_file_creation(
                     filepath, blocks, patch_source_path, output, log_buffer
@@ -850,6 +868,7 @@ def apply_changes(changes_dict, patch_source_path=None):
         if successes:
             with open(filepath, "w") as f:
                 f.writelines(file_lines)
+        _save_state_checksum(filepath)
 
 
 def main():
@@ -899,6 +918,9 @@ def main():
     elif len(args.args) == 2:
         target_override = args.args[0]
         patch_path = args.args[1]
+    else:
+        print("Error: Expected [target_file] patch_file (at most 2 arguments).")
+        sys.exit(1)
 
     if not os.path.exists(patch_path):
         print(f"Error: File '{patch_path}' not found.")
