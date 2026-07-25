@@ -48,6 +48,14 @@ import os
 import sys
 import argparse
 from pathlib import Path
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
+
+
+def get_version():
+    try:
+        return _pkg_version("xtrshow")
+    except PackageNotFoundError:
+        return "unknown (not installed)"
 
 
 # Default ignore patterns
@@ -382,6 +390,9 @@ def main_curses(stdscr, root_node, hidden_count):
 
 def main():
     parser = argparse.ArgumentParser(description="Interactive file tree selector")
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"%(prog)s {get_version()}"
+    )
     parser.add_argument(
         "directory",
         nargs="?",

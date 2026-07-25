@@ -31,6 +31,8 @@ Repository = "https://github.com/Aloecraft-org/xtrshow"
 [project.scripts]
 xtrshow = "xtrshow.cli:main"
 xtrpatch = "xtrshow.repatch:main"
+xtsh = "xtrshow.cli:main"
+xtpa = "xtrshow.repatch:main"
 
 [project.optional-dependencies]
 test = [

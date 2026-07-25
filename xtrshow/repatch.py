@@ -9,6 +9,8 @@ import os
 import shutil
 from pathlib import Path
 
+from xtrshow.cli import get_version
+
 
 def normalize(line):
     """Normalize line for comparison (strip whitespace)."""
@@ -875,6 +877,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Apply AI-generated search/replace blocks",
         usage="%(prog)s [options] [target_file] [patch_file]",
+    )
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"%(prog)s {get_version()}"
     )
 
     parser.add_argument(
