@@ -104,4 +104,5 @@ Worked Example Notes:
 - Indentation is normalized. Don't fret leading whitespace.
 - `LINE_HINT` (e.g. `<<<< 50` or `<<<< 50:60`) is a fuzzy nudge; the content match decides.
 - Each hunk — even a second one for the same file — needs its own `--- a/path` header. (use the real path found inside a code dump (e.g. `src/utils.py`), not the container filename.)
+- For an absolute target, drop the `a/` prefix and write the path as-is: `--- /usr/local/lib/x.py` (or `File: /usr/local/lib/x.py`). `a/` is only for repo-relative paths.
 - Tail context is useful for disambiguating hunks

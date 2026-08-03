@@ -11,6 +11,9 @@ from pathlib import Path
 
 from xtrshow.cli import get_version
 
+# Subdirectory of .xtrpatch/ that mirrors targets living outside the cwd.
+ABS_BACKUP_PREFIX = "_abs"
+
 
 def normalize(line):
     """Normalize line for comparison (strip whitespace)."""
@@ -221,6 +224,26 @@ def find_match(file_lines, search_lines, start_hint=None):
     return None
 
 
+def _strip_diff_prefix(raw_path):
+    """
+    Strip a git-style 'a/' or 'b/' prefix from a header path.
+
+    An absolute target written as '--- a/usr/local/lib/x.py' loses its leading
+    slash to this strip and silently becomes a relative path that resolves
+    against the cwd. Git's own reading (repo-relative 'usr/local/lib/x.py')
+    wins whenever such a file actually exists; otherwise fall back to reading
+    it as the absolute path the leading slash was taken from.
+    """
+    stripped = raw_path[2:]
+    if os.path.exists(stripped):
+        return stripped
+    if not os.path.isabs(stripped):
+        absolute = os.sep + stripped
+        if os.path.exists(absolute):
+            return absolute
+    return stripped
+
+
 def parse_multi_file_patch(content, default_target=None):
     """Parses a patch file containing multiple file sections."""
     changes = {}
@@ -250,7 +273,7 @@ def parse_multi_file_patch(content, default_target=None):
                 if (line.startswith("--- ") and raw_path.startswith("a/")) or (
                     line.startswith("+++ ") and raw_path.startswith("b/")
                 ):
-                    raw_path = raw_path[2:]
+                    raw_path = _strip_diff_prefix(raw_path)
                 current_file = raw_path
             current_annotation = None  # Reset annotation on file change
             i += 1
@@ -358,15 +381,43 @@ def _save_checksum(backup_path):
         print(f"  ! Warning: Failed to save checksum: {e}")
 
 
-def _state_checksum_path(filepath):
-    """Path of the .last.sha256 file recording the post-patch state."""
+def _backup_rel_path(filepath):
+    """
+    Path of a target file *within* the .xtrpatch tree.
+
+    Files under the cwd mirror their relative path. Files outside it used to
+    collapse to their bare basename, so two 'operations.py' from different
+    trees shared one set of backups — and --revert could hand back the wrong
+    file's contents. Mirror the full absolute path under _abs/ instead so
+    distinct targets never share a slot.
+    """
     src = Path(filepath).resolve()
     try:
-        rel_path = src.relative_to(Path.cwd())
+        return src.relative_to(Path.cwd())
     except ValueError:
-        rel_path = Path(src.name)
-    backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
-    return backup_dir / (rel_path.name + ".last.sha256")
+        pass
+
+    parts = []
+    for part in src.parts:
+        # Drops the root ('/' -> '') and sanitizes Windows drives ('C:\' -> 'C')
+        cleaned = part.strip("/\\").replace(":", "")
+        if cleaned:
+            parts.append(cleaned)
+    return Path(ABS_BACKUP_PREFIX).joinpath(*parts)
+
+
+def _backup_location(filepath, backup_root=None):
+    """Returns (directory inside .xtrpatch, filename) for a target file."""
+    rel_path = _backup_rel_path(filepath)
+    if backup_root is None:
+        backup_root = Path.cwd() / ".xtrpatch"
+    return backup_root / rel_path.parent, rel_path.name
+
+
+def _state_checksum_path(filepath):
+    """Path of the .last.sha256 file recording the post-patch state."""
+    backup_dir, filename = _backup_location(filepath)
+    return backup_dir / (filename + ".last.sha256")
 
 
 def _save_state_checksum(filepath):
@@ -406,15 +457,8 @@ def _verify_checksum(filepath):
 
 def get_backup_path(src_path, backup_dir_root):
     """Calculates the next available versioned path."""
-    try:
-        rel_path = src_path.relative_to(Path.cwd())
-    except ValueError:
-        rel_path = Path(src_path.name)
-
-    base_backup_dir = backup_dir_root / rel_path.parent
+    base_backup_dir, filename = _backup_location(src_path, backup_dir_root)
     base_backup_dir.mkdir(parents=True, exist_ok=True)
-
-    filename = rel_path.name
 
     v0 = base_backup_dir / (filename + ".orig")
     if not v0.exists():
@@ -451,16 +495,8 @@ def archive_patch_file(patch_source_path, target_filepath, version_index):
         return
     try:
         # Calculate where the backup lives
-        target_path = Path(target_filepath).resolve()
-        try:
-            rel_path = target_path.relative_to(Path.cwd())
-        except ValueError:
-            rel_path = Path(target_path.name)
-
-        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
+        backup_dir, filename = _backup_location(target_filepath)
         backup_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = rel_path.name
 
         # Format: target.py.patch (v0), target.py.1.patch (v1)
         if version_index == 0:
@@ -479,15 +515,8 @@ def archive_patch_file(patch_source_path, target_filepath, version_index):
 def save_log_file(log_content, target_filepath, version_index):
     """Saves the command output log."""
     try:
-        target_path = Path(target_filepath).resolve()
-        try:
-            rel_path = target_path.relative_to(Path.cwd())
-        except ValueError:
-            rel_path = Path(target_path.name)
-
-        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
+        backup_dir, filename = _backup_location(target_filepath)
         backup_dir.mkdir(parents=True, exist_ok=True)
-        filename = rel_path.name
 
         suffix = ".out" if version_index == 0 else f".{version_index}.out"
         dest = backup_dir / (filename + suffix)
@@ -501,14 +530,7 @@ def save_log_file(log_content, target_filepath, version_index):
 def save_error_report(target_filepath, version_index, log_content):
     """Creates a combined error report with quintuple backticks."""
     try:
-        target_path = Path(target_filepath).resolve()
-        try:
-            rel_path = target_path.relative_to(Path.cwd())
-        except ValueError:
-            rel_path = Path(target_path.name)
-
-        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
-        filename = rel_path.name
+        backup_dir, filename = _backup_location(target_filepath)
 
         suffix_base = "" if version_index == 0 else f".{version_index}"
 
@@ -556,13 +578,7 @@ def revert_file(target_file):
     """Reverts the file to its most recent backup."""
     try:
         target = Path(target_file).resolve()
-        try:
-            rel_path = target.relative_to(Path.cwd())
-        except ValueError:
-            rel_path = Path(target.name)
-
-        backup_dir = Path.cwd() / ".xtrpatch" / rel_path.parent
-        filename = rel_path.name
+        backup_dir, filename = _backup_location(target)
 
         if not backup_dir.exists():
             print(f"No backups found for {target_file}")
