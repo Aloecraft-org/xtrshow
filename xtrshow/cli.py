@@ -48,14 +48,8 @@ import os
 import sys
 import argparse
 from pathlib import Path
-from importlib.metadata import version as _pkg_version, PackageNotFoundError
 
-
-def get_version():
-    try:
-        return _pkg_version("xtrshow")
-    except PackageNotFoundError:
-        return "unknown (not installed)"
+from xtrshow import get_version
 
 
 # Default ignore patterns

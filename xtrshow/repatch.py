@@ -9,7 +9,7 @@ import os
 import shutil
 from pathlib import Path
 
-from xtrshow.cli import get_version
+from xtrshow import get_version
 
 # Subdirectory of .xtrpatch/ that mirrors targets living outside the cwd.
 ABS_BACKUP_PREFIX = "_abs"
