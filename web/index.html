@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>xtrshow — Code Extraction &amp; Patching Made Easy</title>
+<meta name="description" content="A CLI suite that closes the loop between your local codebase and AI coding assistants. Extract context, prompt, apply changes safely. Try the patcher live in your browser.">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+<meta property="og:title" content="xtrshow — Code Extraction &amp; Patching Made Easy">
+<meta property="og:description" content="Close the loop between your codebase and any LLM chat. No API keys, no agents, no daemons.">
+<meta property="og:type" content="website">
+</head>
+<body>
+
+<header class="hero">
+  <nav class="nav">
+    <a class="brand" href="#top">
+      <img src="assets/icon.svg" alt="" width="28" height="28">
+      <span>xtrshow</span>
+    </a>
+    <div class="nav-links">
+      <a href="#demo">Demo</a>
+      <a href="#format">Format</a>
+      <a href="#features">Features</a>
+      <a href="https://github.com/Aloecraft-org/xtrshow">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="hero-inner" id="top">
+    <img class="hero-icon" src="assets/icon.svg" alt="xtrshow logo" width="88" height="88">
+    <h1>Code extraction &amp; patching<br><span class="grad">made easy</span></h1>
+    <p class="tagline">
+      A CLI suite that closes the loop between your local codebase and AI coding
+      assistants. Works with any chat interface — including free tiers — because
+      the protocol is just text.
+    </p>
+
+    <div class="install">
+      <code id="install-cmd">pip install xtrshow</code>
+      <button class="copy" data-copy="pip install xtrshow" aria-label="Copy install command">Copy</button>
+    </div>
+
+    <ul class="no-deps">
+      <li><span class="chk">✓</span>No API keys</li>
+      <li><span class="chk">✓</span>No agents</li>
+      <li><span class="chk">✓</span>No daemons</li>
+    </ul>
+
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#demo">Try the patcher in your browser →</a>
+      <a class="btn btn-ghost" href="https://github.com/Aloecraft-org/xtrshow">View source</a>
+    </div>
+  </div>
+</header>
+
+<main>
+
+<!-- ── The loop ───────────────────────────────────────────── -->
+<section class="section" id="loop">
+  <h2>The loop</h2>
+  <p class="lede">
+    Two commands. <code>xtrshow</code> gets code <em>into</em> the model,
+    <code>xtrpatch</code> gets it back <em>out</em>.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <div class="step-n">1</div>
+      <h3>Extract</h3>
+      <p>Pick files in a keyboard-driven TUI. Output is line-numbered and headed with <code>--- a/path</code>, so the model can anchor edits to exact locations.</p>
+      <pre class="term"><span class="c-dim">$</span> xtrshow <span class="c-op">|</span> pbcopy</pre>
+    </li>
+    <li>
+      <div class="step-n">2</div>
+      <h3>Prompt</h3>
+      <p>Paste the context into any LLM along with the patch-format instructions.</p>
+      <pre class="term"><span class="c-dim">$</span> xtrshow -p</pre>
+    </li>
+    <li>
+      <div class="step-n">3</div>
+      <h3>Apply</h3>
+      <p>Save the reply and apply it. Every touched file is backed up first, and <code>--revert</code> unwinds the whole patch.</p>
+      <pre class="term"><span class="c-dim">$</span> xtrpatch changes.txt</pre>
+    </li>
+  </ol>
+</section>
+
+<!-- ── Live demo ──────────────────────────────────────────── -->
+<section class="section demo-section" id="demo">
+  <h2>Try it live</h2>
+  <p class="lede">
+    This runs the <strong>real <code>xtrpatch</code> engine</strong> — the actual
+    Python package, compiled to WebAssembly and executed in your browser. Nothing
+    is sent to a server. Edit either pane and re-run.
+  </p>
+
+  <div class="demo" id="demo-app">
+
+    <div class="scenarios" role="tablist" aria-label="Demo scenarios">
+      <button class="scn is-active" data-scn="basic"      role="tab">Basic</button>
+      <button class="scn" data-scn="whitespace"           role="tab">Fuzzy whitespace</button>
+      <button class="scn" data-scn="wildcard"             role="tab">Wildcard anchors</button>
+      <button class="scn" data-scn="tail"                 role="tab">Hint + tail context</button>
+      <button class="scn" data-scn="insert"               role="tab">Insert / create</button>
+      <button class="scn" data-scn="delete"               role="tab">Delete</button>
+      <button class="scn" data-scn="failure"              role="tab">Failure</button>
+    </div>
+
+    <p class="scn-desc" id="scn-desc"></p>
+
+    <div class="panes">
+      <div class="pane">
+        <div class="pane-head">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="pane-title" id="src-name">server.py</span>
+          <span class="pane-tag">your file</span>
+        </div>
+        <textarea id="src" spellcheck="false" aria-label="Source file"></textarea>
+      </div>
+
+      <div class="pane">
+        <div class="pane-head">
+          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+          <span class="pane-title">changes.txt</span>
+          <span class="pane-tag">LLM output</span>
+        </div>
+        <textarea id="patch" spellcheck="false" aria-label="Patch"></textarea>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-primary" id="run">
+        <span id="run-label">Apply patch</span>
+      </button>
+      <button class="btn btn-ghost" id="revert" disabled>Revert</button>
+      <button class="btn btn-ghost" id="reset">Reset scenario</button>
+      <span class="status" id="status" aria-live="polite"></span>
+    </div>
+
+    <div class="pane out-pane">
+      <div class="pane-head">
+        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+        <span class="pane-title">$ xtrpatch changes.txt</span>
+      </div>
+      <pre class="term out" id="out">Click <strong>Apply patch</strong> to load the Python runtime and run xtrpatch.
+
+First run downloads ~5&nbsp;MB of WebAssembly (cached afterwards).</pre>
+    </div>
+
+    <details class="fs-details">
+      <summary>Show the <code>.xtrpatch/</code> backup tree</summary>
+      <pre class="term fs" id="fstree">(nothing yet)</pre>
+    </details>
+  </div>
+</section>
+
+<!-- ── Format ─────────────────────────────────────────────── -->
+<section class="section" id="format">
+  <h2>Why not just unified diffs?</h2>
+  <p class="lede">
+    LLMs are unreliable at producing valid unified diffs — line numbers drift,
+    context lines get hallucinated, and one bad hunk poisons the file.
+    <code>xtrpatch</code> uses a Search &amp; Replace block format designed
+    around how models actually fail.
+  </p>
+
+  <div class="fmt">
+    <pre class="term fmt-code"><span class="c-hdr">--- a/path/to/file.py</span>
+<span class="c-ann">@ optional: describe the change</span>
+<span class="c-mark">&lt;&lt;&lt;&lt;</span> <span class="c-dim">LINE_HINT</span>
+<span class="c-del">[code to find]</span>
+<span class="c-mark">====</span>
+<span class="c-add">[code to replace it with]</span>
+<span class="c-mark">====</span>
+<span class="c-dim">[optional tail: line that must follow]</span>
+<span class="c-mark">&gt;&gt;&gt;&gt;</span></pre>
+
+    <ul class="fmt-notes">
+      <li><b>Fuzzy whitespace matching</b> absorbs the indentation errors models constantly make.</li>
+      <li><b>Wildcard anchors</b> (<code>~~~~</code>) let the model match on stable signatures and skip volatile interior lines.</li>
+      <li><b>Line hints</b> (<code>&lt;&lt;&lt;&lt; 42</code>) disambiguate when the same block appears more than once.</li>
+      <li><b>Tail context</b> guards a match with a lookahead, so a hunk never lands in the wrong place.</li>
+      <li><b>Per-hunk annotations</b> (<code>@ why</code>) surface in the apply report, so failures are self-describing and feed straight back into the LLM.</li>
+    </ul>
+  </div>
+
+  <table class="ops">
+    <caption>Operations</caption>
+    <thead><tr><th>Operation</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>Modify</td><td>search + replace</td></tr>
+      <tr><td>Insert</td><td>empty search + line hint <code>&lt;&lt;&lt;&lt; 20</code></td></tr>
+      <tr><td>Create file</td><td>empty search block</td></tr>
+      <tr><td>Delete section</td><td>real search + empty replace</td></tr>
+      <tr><td>Delete file</td><td><code>! DELETE FILE</code> on its own line</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ── Features ───────────────────────────────────────────── -->
+<section class="section" id="features">
+  <h2>Features</h2>
+  <div class="cards">
+    <div class="card">
+      <h3><span class="ic">📂</span> Interactive TUI</h3>
+      <p>Fast, keyboard-driven file selection with directory expand/collapse and live size stats.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ic">🔢</span> LLM-optimized output</h3>
+      <p>Line-numbered content with <code>--- a/path</code> headers the patcher can target.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ic">🧹</span> Smart filtering</h3>
+      <p>Ignores <code>node_modules</code>, <code>.git</code>, build artifacts and friends by default.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ic">💾</span> Safety first</h3>
+      <p>Automatic, versioned backups in <code>.xtrpatch/</code> before every modification.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ic">🔐</span> Checksum verification</h3>
+      <p>Warns when a file was edited outside the patch loop since the last apply.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ic">⚡</span> Conflict detection</h3>
+      <p>Overlapping hunks are caught pre-flight and skipped, never blindly stacked.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ic">🧠</span> Idempotent</h3>
+      <p>Re-applying a patch detects already-applied hunks and skips them.</p>
+    </div>
+    <div class="card">
+      <h3><span class="ic">↩️</span> Undo button</h3>
+      <p><code>--revert</code> restores the most recent backup — per file, or every file in a patch.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section closing">
+  <h2>Get started</h2>
+  <div class="install install-lg">
+    <code>pip install xtrshow</code>
+    <button class="copy" data-copy="pip install xtrshow" aria-label="Copy install command">Copy</button>
+  </div>
+  <p class="lede center">
+    Installs <code>xtrshow</code> (the extractor) and <code>xtrpatch</code> (the patcher).
+    Short aliases: <code>xtsh</code> and <code>xtpa</code>.
+  </p>
+  <p class="center">
+    <a class="btn btn-primary" href="https://github.com/Aloecraft-org/xtrshow/blob/main/doc/GETTING_STARTED.md">Read the getting started guide →</a>
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/Aloecraft-org/xtrshow">GitHub</a> ·
+    <a href="https://pypi.org/project/xtrshow/">PyPI</a> ·
+    Apache 2.0
+  </p>
+  <p class="fine">
+    © Michael Godfrey · <a href="https://aloecraft.org">aloecraft.org</a><br>
+    Demo runs the real package via <a href="https://pyodide.org">Pyodide</a>; your code never leaves the browser.
+  </p>
+</footer>
+
+<script src="assets/demo.js" type="module"></script>
+</body>
+</html>

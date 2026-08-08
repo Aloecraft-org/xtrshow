@@ -1,0 +1,7 @@
+# Local Pyodide distribution used for offline development / CI smoke tests
+.pyodide-local/
+
+node_modules/
+.DS_Store
+__pycache__/
+*.pyc

@@ -1,0 +1,87 @@
+# xtrshow-web
+
+> **Staged for extraction.** This directory is a complete, self-contained repo
+> intended to live at `Aloecraft-org/xtrshow-web`. It sits here only so the work
+> is versioned until that repo exists. Paths, the Pages workflow and the sync
+> script all assume this directory is the repository root — see "Extracting"
+> at the bottom.
+
+Marketing site and **live browser demo** for
+[xtrshow](https://github.com/Aloecraft-org/xtrshow) — a CLI suite that closes the
+loop between your local codebase and AI coding assistants.
+
+The demo is not a mock-up. It runs the real, unmodified `xtrshow.repatch`
+module under [Pyodide](https://pyodide.org) (CPython compiled to WebAssembly),
+including versioned backups, SHA256 checksums, `.rpterr` error bundles, and
+`--revert`. Nothing is sent to a server.
+
+## Layout
+
+```
+index.html               single page: hero, the loop, live demo, format, features
+assets/style.css         all styling; palette taken from the project icon
+assets/demo.js           Pyodide bootstrap + UI wiring
+assets/scenarios.js      the seven demo scenarios
+assets/driver.py         thin adapter between JS and xtrshow.repatch
+vendor/xtrshow/*.py      vendored package source — the demo imports this
+scripts/sync-xtrshow.sh  refresh vendor/ from an xtrshow checkout
+```
+
+## Local development
+
+Any static server works — the page uses ES modules and `fetch`, so
+`file://` will not do.
+
+```bash
+python3 -m http.server 8000
+# then open http://localhost:8000
+```
+
+The Python runtime is fetched from the jsDelivr CDN by default (~5 MB, cached
+after the first load). To work offline, or to keep CI off the network, drop a
+Pyodide distribution somewhere local and point the page at it:
+
+```
+http://localhost:8000/?pyodide=/path/to/pyodide/dist/
+```
+
+## Updating the vendored package
+
+The demo runs whatever is in `vendor/xtrshow/`. After an xtrshow release:
+
+```bash
+XTRSHOW_SRC=../xtrshow ./scripts/sync-xtrshow.sh   # or omit to clone main
+```
+
+The script refuses to vendor a source tree where `repatch.py` imports from
+`cli.py`. That import chain pulls in `curses`, which does not exist in Pyodide,
+and would break the demo at load time.
+
+## Deploying
+
+`.github/workflows/pages.yml` publishes the repository root to GitHub Pages on
+every push to `main`. There is no build step — what is in the repo is what
+ships.
+
+## Extracting into its own repo
+
+This directory is already a complete repository root. To split it out with its
+history intact:
+
+```bash
+# from an xtrshow checkout, on the branch holding this directory
+git subtree split --prefix=web -b xtrshow-web-split
+
+# create Aloecraft-org/xtrshow-web on GitHub (empty, no README), then:
+git push git@github.com:Aloecraft-org/xtrshow-web.git xtrshow-web-split:main
+```
+
+Or, if the history does not matter, just copy the directory into a fresh repo.
+
+Once it stands alone, enable **Settings → Pages → Source: GitHub Actions**, and
+delete the "Staged for extraction" note at the top of this file. Remember that
+GitHub Pages needs the repo to be public unless the account is on a paid plan.
+
+## License
+
+Apache 2.0, matching xtrshow itself.
