@@ -26,7 +26,15 @@ assets/scenarios.js      the seven demo scenarios
 assets/driver.py         thin adapter between JS and xtrshow.repatch
 vendor/xtrshow/*.py      vendored package source — the demo imports this
 scripts/sync-xtrshow.sh  refresh vendor/ from an xtrshow checkout
+doc/DEPLOYMENT.md        serving this site from your own server
 ```
+
+## Deploying somewhere other than GitHub Pages
+
+`doc/DEPLOYMENT.md` covers publishing to your own host: what the artifact is
+(no build step — the repo root is the deployable tree), the two server settings
+that break the demo *silently* if wrong, how to self-host the Python runtime so
+no CDN is contacted, and a post-deploy smoke test.
 
 ## How the demo behaves
 

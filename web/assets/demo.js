@@ -9,11 +9,18 @@ import { SCENARIOS } from "./scenarios.js";
 import { python, patch as hlPatch, markdown, esc } from "./highlight.js";
 
 const PYODIDE_VERSION = "0.26.4";
-// ?pyodide=/some/local/dist/ points the runtime at a local copy, for offline
-// development and for CI smoke tests that must not reach a CDN.
+
+// Where the Python runtime is served from, most specific wins:
+//   1. ?pyodide=/path/   — offline development and CI smoke tests
+//   2. <meta name="pyodide-url" content="/path/">  — self-hosted deployments
+//   3. the jsDelivr CDN  — default
+// A self-hosted directory needs exactly five files; see doc/DEPLOYMENT.md.
+const metaPyodide = document
+  .querySelector('meta[name="pyodide-url"]')
+  ?.content?.trim();
 const PYODIDE_URL =
   new URLSearchParams(location.search).get("pyodide") ||
-  `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
+  (metaPyodide || `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`);
 const VENDOR_FILES = ["__init__.py", "cli.py", "repatch.py"];
 const PATCH_NAME = "xpatch.txt";
 

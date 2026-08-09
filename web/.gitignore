@@ -1,5 +1,7 @@
-# Local Pyodide distribution used for offline development / CI smoke tests
-.pyodide-local/
+# Local Pyodide distributions used for offline development / CI smoke tests.
+# A self-hosted *deployment* copy belongs at vendor/pyodide/ and IS committed —
+# see doc/DEPLOYMENT.md §3.
+.pyodide-*/
 
 node_modules/
 .DS_Store
