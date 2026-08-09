@@ -81,7 +81,7 @@
       <div class="step-n">3</div>
       <h3>Apply</h3>
       <p>Save the reply and apply it. Every touched file is backed up first, and <code>--revert</code> unwinds the whole patch.</p>
-      <pre class="term"><span class="c-dim">$</span> xtrpatch changes.txt</pre>
+      <pre class="term"><span class="c-dim">$</span> xtrpatch xpatch.txt</pre>
     </li>
   </ol>
 </section>
@@ -90,9 +90,11 @@
 <section class="section demo-section" id="demo">
   <h2>Try it live</h2>
   <p class="lede">
-    This runs the <strong>real <code>xtrpatch</code> engine</strong> — the actual
-    Python package, compiled to WebAssembly and executed in your browser. Nothing
-    is sent to a server. Edit either pane and re-run.
+    A working shell with your file on the left, the model's reply on the right,
+    and a real terminal underneath. Every command you run drives the
+    <strong>actual <code>xtrpatch</code> engine</strong> — the Python package
+    itself, compiled to WebAssembly. Nothing is sent to a server, and both
+    editors are yours to change.
   </p>
 
   <div class="demo" id="demo-app">
@@ -109,49 +111,91 @@
 
     <p class="scn-desc" id="scn-desc"></p>
 
-    <div class="panes">
-      <div class="pane">
-        <div class="pane-head">
-          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-          <span class="pane-title" id="src-name">server.py</span>
-          <span class="pane-tag">your file</span>
+    <div class="ide" id="ide">
+
+      <!-- Install gate: covers the workspace until the runtime is up. -->
+      <div class="gate" id="gate">
+        <div class="gate-card">
+          <h3>Try it</h3>
+          <p>Install <code>xtrshow</code> and the workspace below goes live.</p>
+          <div class="gate-cmd">
+            <label class="sr-only" for="gate-input">Install command</label>
+            <input id="gate-input" type="text" readonly value="pip install xtrshow"
+                   aria-label="Install command" tabindex="-1">
+          </div>
+          <button class="btn btn-primary gate-go" id="gate-go">Go</button>
+          <p class="gate-fine">
+            Nothing is installed on your machine — the package runs sandboxed
+            inside this tab.
+          </p>
         </div>
-        <textarea id="src" spellcheck="false" aria-label="Source file"></textarea>
       </div>
 
-      <div class="pane">
-        <div class="pane-head">
-          <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-          <span class="pane-title">changes.txt</span>
-          <span class="pane-tag">LLM output</span>
+      <!-- Editors -->
+      <div class="ide-editors">
+        <div class="ed">
+          <div class="ed-tabs" role="tablist" aria-label="Source file">
+            <button class="ed-tab is-active" role="tab" aria-selected="true">
+              <span class="fi py"></span><span id="src-name">server.py</span>
+            </button>
+            <span class="ed-tag">your code</span>
+          </div>
+          <div class="ed-body">
+            <div class="gutter" id="src-gutter" aria-hidden="true"></div>
+            <div class="code-stack">
+              <pre class="hl" id="src-hl" aria-hidden="true"></pre>
+              <textarea id="src" spellcheck="false" autocomplete="off"
+                        autocapitalize="off" aria-label="Source file"></textarea>
+            </div>
+          </div>
         </div>
-        <textarea id="patch" spellcheck="false" aria-label="Patch"></textarea>
+
+        <div class="ed">
+          <div class="ed-tabs" role="tablist" aria-label="xtrshow files">
+            <button class="ed-tab is-active" role="tab" data-tab="patch" aria-selected="true">
+              <span class="fi txt"></span><span>xpatch.txt</span>
+            </button>
+            <button class="ed-tab" role="tab" data-tab="xtract" aria-selected="false">
+              <span class="fi md"></span><span>xtract.md</span>
+            </button>
+          </div>
+          <div class="ed-body" data-pane="patch">
+            <div class="gutter" id="patch-gutter" aria-hidden="true"></div>
+            <div class="code-stack">
+              <pre class="hl" id="patch-hl" aria-hidden="true"></pre>
+              <textarea id="patch" spellcheck="false" autocomplete="off"
+                        autocapitalize="off" aria-label="Patch file"></textarea>
+            </div>
+          </div>
+          <div class="ed-body is-hidden" data-pane="xtract">
+            <div class="gutter" id="xtract-gutter" aria-hidden="true"></div>
+            <div class="code-stack">
+              <pre class="hl" id="xtract-hl" aria-hidden="true"></pre>
+              <textarea id="xtract" spellcheck="false" readonly
+                        aria-label="Extracted context (read only)"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Terminal -->
+      <div class="ide-term">
+        <div class="term-bar">
+          <span class="term-tab is-active">TERMINAL</span>
+          <span class="term-shell">bash — demo</span>
+          <div class="term-actions">
+            <button class="tbtn tbtn-go" id="run"    title="Apply the patch">xtrpatch xpatch.txt</button>
+            <button class="tbtn" id="revert" title="Revert every file the patch touched">--revert</button>
+            <button class="tbtn" id="cmd-tree" title="List the working tree">tree</button>
+            <button class="tbtn" id="cmd-ls"   title="List the backup directory">ls .xtrpatch/</button>
+            <button class="tbtn tbtn-quiet" id="reset" title="Restore the scenario">reset</button>
+          </div>
+        </div>
+        <div class="term-body" id="term" role="log" aria-live="polite" aria-label="Terminal output"></div>
       </div>
     </div>
 
-    <div class="controls">
-      <button class="btn btn-primary" id="run">
-        <span id="run-label">Apply patch</span>
-      </button>
-      <button class="btn btn-ghost" id="revert" disabled>Revert</button>
-      <button class="btn btn-ghost" id="reset">Reset scenario</button>
-      <span class="status" id="status" aria-live="polite"></span>
-    </div>
-
-    <div class="pane out-pane">
-      <div class="pane-head">
-        <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-        <span class="pane-title">$ xtrpatch changes.txt</span>
-      </div>
-      <pre class="term out" id="out">Click <strong>Apply patch</strong> to load the Python runtime and run xtrpatch.
-
-First run downloads ~5&nbsp;MB of WebAssembly (cached afterwards).</pre>
-    </div>
-
-    <details class="fs-details">
-      <summary>Show the <code>.xtrpatch/</code> backup tree</summary>
-      <pre class="term fs" id="fstree">(nothing yet)</pre>
-    </details>
+    <p class="status" id="status" aria-live="polite"></p>
   </div>
 </section>
 

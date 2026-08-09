@@ -18,6 +18,7 @@ import xtrshow.repatch as rp
 from xtrshow import get_version
 
 ROOT = Path("/demo")
+PATCH_NAME = "xpatch.txt"
 
 
 def _workdir(scenario):
@@ -78,7 +79,7 @@ def apply_patch(scenario, src_name, src_text, patch_text):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(src_text)
 
-    patch_path = wd / "changes.txt"
+    patch_path = wd / PATCH_NAME
     patch_path.write_text(patch_text)
 
     cwd = os.getcwd()
@@ -96,7 +97,7 @@ def apply_patch(scenario, src_name, src_text, patch_text):
                 }
             )
         with contextlib.redirect_stdout(buf):
-            rp.apply_changes(changes, patch_source_path="changes.txt")
+            rp.apply_changes(changes, patch_source_path=PATCH_NAME)
     except Exception as exc:  # surfaced in the terminal pane, never swallowed
         error = f"{type(exc).__name__}: {exc}"
     finally:
@@ -115,15 +116,27 @@ def apply_patch(scenario, src_name, src_text, patch_text):
     )
 
 
-def revert(scenario, src_name):
-    """Run the real revert_file() against the scenario's backups."""
+def revert(scenario, patch_text):
+    """
+    Mirror `xtrpatch --revert <patchfile>`.
+
+    The CLI parses the patch, then reverts every file it names. Reproduced here
+    by calling the same two functions in the same order, so the terminal output
+    matches what the command prints on a real machine.
+    """
     wd = _workdir(scenario)
     cwd = os.getcwd()
     buf = io.StringIO()
     try:
         os.chdir(wd)
         with contextlib.redirect_stdout(buf):
-            rp.revert_file(src_name)
+            changes = rp.parse_multi_file_patch(patch_text)
+            if changes:
+                print(f"Found {len(changes)} target(s) in patch file to revert.")
+                for filepath in changes.keys():
+                    rp.revert_file(filepath)
+            else:
+                print("No valid blocks found in patch file.")
     finally:
         os.chdir(cwd)
 
@@ -134,6 +147,55 @@ def revert(scenario, src_name):
             "tree": _tree(wd),
         }
     )
+
+
+def tree(scenario):
+    """Approximate `tree .` over the working directory, minus .xtrpatch/."""
+    wd = _workdir(scenario)
+    if not wd.exists():
+        return json.dumps({"report": "(nothing here yet)"})
+
+    entries = sorted(
+        p for p in wd.iterdir() if p.name != ".xtrpatch"
+    )
+    lines = ["."]
+    for i, p in enumerate(entries):
+        lines.append(f"{'└── ' if i == len(entries) - 1 else '├── '}{p.name}")
+    # tree(1) counts the root it was pointed at, hence the +1.
+    n_dirs = sum(1 for p in entries if p.is_dir()) + 1
+    n_files = sum(1 for p in entries if p.is_file())
+    lines.append("")
+    lines.append(f"{n_dirs} director{'y' if n_dirs == 1 else 'ies'}, {n_files} file{'' if n_files == 1 else 's'}")
+    return json.dumps({"report": "\n".join(lines)})
+
+
+def ls_backups(scenario):
+    """`ls .xtrpatch/` — the safety net, made visible."""
+    wd = _workdir(scenario)
+    xp = wd / ".xtrpatch"
+    if not xp.exists():
+        return json.dumps(
+            {"report": "ls: cannot access '.xtrpatch/': No such file or directory"}
+        )
+    names = sorted(p.name for p in xp.iterdir())
+    return json.dumps({"report": "  ".join(names) if names else ""})
+
+
+def extract(src_name, src_text):
+    """
+    Reproduce what `xtrshow` writes for a single selected file.
+
+    Mirrors the block construction in xtrshow/cli.py: a --- a/ +++ b/ header
+    pair, then the file fenced and prefixed with right-aligned line numbers.
+    """
+    content = src_text.replace("\r\n", "\n")
+    lines = content.splitlines()
+    width = len(str(len(lines))) if lines else 1
+    body = "\n".join(f"{i + 1:>{width}}:{line}" for i, line in enumerate(lines))
+    ext = os.path.splitext(src_name)[1]
+    lang = ext[1:] if ext.startswith(".") else ext
+    fence = "```"
+    return f"--- a/{src_name}\n+++ b/{src_name}\n{fence} {lang}\n{body}\n{fence}\n"
 
 
 def version():

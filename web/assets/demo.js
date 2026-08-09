@@ -1,7 +1,12 @@
-// Live xtrpatch demo. Loads Pyodide on demand, mounts the vendored xtrshow
-// package into its in-memory filesystem, and calls the real apply_changes().
+// Live xtrpatch demo.
+//
+// The page presents a small IDE: two editors over a terminal. Buttons do not
+// call the engine directly — they type a command into the terminal and run it,
+// so what you read on screen is the command that produced the output. The
+// engine itself is the real, unmodified xtrshow.repatch running under Pyodide.
 
 import { SCENARIOS } from "./scenarios.js";
+import { python, patch as hlPatch, markdown, esc } from "./highlight.js";
 
 const PYODIDE_VERSION = "0.26.4";
 // ?pyodide=/some/local/dist/ points the runtime at a local copy, for offline
@@ -10,57 +15,181 @@ const PYODIDE_URL =
   new URLSearchParams(location.search).get("pyodide") ||
   `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const VENDOR_FILES = ["__init__.py", "cli.py", "repatch.py"];
+const PATCH_NAME = "xpatch.txt";
+
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const sleep = (ms) => new Promise((r) => setTimeout(r, REDUCED ? 0 : ms));
 
 const $ = (id) => document.getElementById(id);
 const el = {
+  gate: $("gate"),
+  gateGo: $("gate-go"),
   src: $("src"),
   patch: $("patch"),
-  out: $("out"),
+  xtract: $("xtract"),
+  term: $("term"),
   status: $("status"),
   run: $("run"),
-  runLabel: $("run-label"),
   revert: $("revert"),
   reset: $("reset"),
+  tree: $("cmd-tree"),
+  ls: $("cmd-ls"),
   srcName: $("src-name"),
   scnDesc: $("scn-desc"),
-  fstree: $("fstree"),
 };
 
 let pyodide = null;
 let driver = null;
 let booting = null;
+let pkgVersion = "1.0.1";
 let current = "basic";
-// Scenarios whose working directory has been seeded this session. Seeding wipes
-// .xtrpatch/, so it must happen once per scenario — not on every apply, or
-// revert would never have a backup to restore from.
+let busy = false;
+// Seeding wipes .xtrpatch/, so it happens once per scenario — not per apply,
+// or revert would never have a backup to restore from.
 const seeded = new Set();
 
-/* ── terminal output ─────────────────────────────────────── */
+/* ── editors ─────────────────────────────────────────────── */
 
-const ESC = (s) =>
-  String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+// A transparent textarea sits over a highlighted <pre>. Keeping the two in
+// sync — content, scroll, and the line-number gutter — is all this does.
+function makeEditor(taId, hlId, gutterId, highlighter) {
+  const ta = $(taId);
+  const hl = $(hlId);
+  const gutter = $(gutterId);
 
-// Colourise xtrpatch's own report markers. Purely presentational — the text
-// itself is whatever the engine printed.
-function paint(text) {
-  return ESC(text)
-    .split("\n")
-    .map((line) => {
-      if (/✅|✨/.test(line)) return `<span class="ok">${line}</span>`;
-      if (/❌|🗑️/.test(line)) return `<span class="bad">${line}</span>`;
-      if (/⚠️|🛑|⚡|!/.test(line)) return `<span class="warn">${line}</span>`;
-      if (/🧠|⏭️/.test(line)) return `<span class="info">${line}</span>`;
-      if (/^\s*\(/.test(line)) return `<span class="muted">${line}</span>`;
-      if (/^📄/.test(line)) return `<span class="hdr">${line}</span>`;
-      return line;
-    })
-    .join("\n");
+  const render = () => {
+    // Trailing newline needs a companion or the last line has no box to sit in.
+    hl.innerHTML = highlighter(ta.value) + "\n";
+    const n = ta.value.split("\n").length;
+    gutter.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
+  };
+
+  const sync = () => {
+    hl.scrollTop = ta.scrollTop;
+    hl.scrollLeft = ta.scrollLeft;
+    gutter.scrollTop = ta.scrollTop;
+  };
+
+  ta.addEventListener("input", () => { render(); sync(); });
+  ta.addEventListener("scroll", sync);
+  ta.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab" || ta.readOnly) return;
+    e.preventDefault();
+    const { selectionStart: a, selectionEnd: b, value } = ta;
+    ta.value = value.slice(0, a) + "    " + value.slice(b);
+    ta.selectionStart = ta.selectionEnd = a + 4;
+    render();
+  });
+
+  return {
+    get value() { return ta.value; },
+    set value(v) { ta.value = v; render(); ta.scrollTop = 0; sync(); },
+    render,
+  };
 }
 
-const write = (text) => { el.out.innerHTML = paint(text); };
-const setStatus = (msg, cls = "") => {
-  el.status.textContent = msg;
-  el.status.className = "status " + cls;
+const srcEd = makeEditor("src", "src-hl", "src-gutter", python);
+const patchEd = makeEditor("patch", "patch-hl", "patch-gutter", hlPatch);
+const xtractEd = makeEditor("xtract", "xtract-hl", "xtract-gutter", markdown);
+
+// Right-hand pane has two tabs: the patch, and the extractor's output.
+document.querySelectorAll(".ed-tab[data-tab]").forEach((tab) =>
+  tab.addEventListener("click", () => {
+    const name = tab.dataset.tab;
+    document.querySelectorAll(".ed-tab[data-tab]").forEach((t) => {
+      const on = t === tab;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", String(on));
+    });
+    document.querySelectorAll("[data-pane]").forEach((p) =>
+      p.classList.toggle("is-hidden", p.dataset.pane !== name)
+    );
+    if (name === "xtract") refreshExtract();
+  })
+);
+
+function refreshExtract() {
+  if (!driver) {
+    xtractEd.value =
+      "# Run the install first — this pane is generated by xtrshow itself.\n";
+    return;
+  }
+  xtractEd.value = driver.extract(SCENARIOS[current].file, srcEd.value);
+}
+
+/* ── terminal ────────────────────────────────────────────── */
+
+const PROMPT =
+  '<span class="tp-user">you@xtrshow</span>' +
+  '<span class="tp-sig">:</span>' +
+  '<span class="tp-path">~/demo</span>' +
+  '<span class="tp-sig">$</span> ';
+
+// Colourise xtrpatch's own report markers. Presentational only — the text is
+// exactly what the engine printed.
+function paintLine(line) {
+  const e = esc(line);
+  if (/✅|✨|Successfully|✓/.test(line)) return `<span class="out-ok">${e}</span>`;
+  if (/❌|🗑️/.test(line)) return `<span class="out-bad">${e}</span>`;
+  if (/⚠️|🛑|⚡|^\s*!/.test(line)) return `<span class="out-warn">${e}</span>`;
+  if (/🧠|⏭️/.test(line)) return `<span class="out-info">${e}</span>`;
+  if (/^📄/.test(line)) return `<span class="out-hdr">${e}</span>`;
+  if (/^\s*\(/.test(line)) return `<span class="out-muted">${e}</span>`;
+  return e;
+}
+
+const term = {
+  el: el.term,
+  _caret: null,
+
+  _scroll() { this.el.scrollTop = this.el.scrollHeight; },
+
+  clear() { this.el.innerHTML = ""; this._caret = null; },
+
+  line(html = "") {
+    this.dropCaret();
+    const d = document.createElement("span");
+    d.className = "ln";
+    d.innerHTML = html;
+    this.el.appendChild(d);
+    this._scroll();
+    return d;
+  },
+
+  out(text) {
+    if (!text) return;
+    text.split("\n").forEach((l) => this.line(paintLine(l)));
+  },
+
+  dropCaret() {
+    if (this._caret) { this._caret.remove(); this._caret = null; }
+  },
+
+  idle() {
+    this.dropCaret();
+    const d = document.createElement("span");
+    d.className = "ln";
+    d.innerHTML = PROMPT + '<span class="caret"></span>';
+    this.el.appendChild(d);
+    this._caret = d;
+    this._scroll();
+  },
+
+  // Type a command at the prompt, character by character, then leave it.
+  async type(cmd) {
+    this.dropCaret();
+    const row = this.line(PROMPT + '<span class="t-cmd"></span><span class="caret"></span>');
+    const slot = row.querySelector(".t-cmd");
+    const caret = row.querySelector(".caret");
+    const step = REDUCED ? 0 : Math.max(8, Math.min(26, 620 / cmd.length));
+    for (let i = 1; i <= cmd.length; i++) {
+      slot.textContent = cmd.slice(0, i);
+      this._scroll();
+      if (step) await sleep(step);
+    }
+    caret.remove();
+    await sleep(90);
+  },
 };
 
 /* ── boot ────────────────────────────────────────────────── */
@@ -76,14 +205,8 @@ function loadScript(src) {
 }
 
 async function boot() {
-  setStatus("Downloading Python runtime (~5 MB, cached after this)…");
-  el.out.innerHTML = "";
-  write("Loading Pyodide…");
-
   await loadScript(PYODIDE_URL + "pyodide.js");
   pyodide = await globalThis.loadPyodide({ indexURL: PYODIDE_URL });
-
-  write("Mounting the xtrshow package…");
 
   // Mount the vendored package exactly as published — no patching, no shims.
   pyodide.FS.mkdirTree("/vendor/xtrshow");
@@ -107,156 +230,210 @@ import sys
 sys.path.insert(0, "/vendor")
 `);
   driver = pyodide.pyimport("_driver");
-
-  const v = driver.version();
-  write(`Ready. xtrshow ${v} running on Python ${pyodide.runPython("import sys; sys.version.split()[0]")} (WebAssembly).\n`);
-  setStatus("");
 }
 
 function ensureBooted() {
   if (!booting) {
-    booting = boot().catch((err) => {
-      booting = null;
-      throw err;
-    });
+    booting = boot().catch((err) => { booting = null; throw err; });
   }
   return booting;
 }
 
+// The install is theatre; the download underneath it is real. Lines are paced
+// against the actual boot so the two finish together.
+async function runInstall() {
+  await term.type("pip install xtrshow");
+  const bootPromise = ensureBooted();
+
+  fetch("vendor/VERSION")
+    .then((r) => (r.ok ? r.text() : null))
+    .then((v) => { if (v && v.trim()) pkgVersion = v.trim(); })
+    .catch(() => {});
+
+  term.line('<span class="out-muted">Collecting xtrshow</span>');
+  await sleep(280);
+  term.line(
+    `<span class="out-muted">  Downloading xtrshow-${esc(pkgVersion)}-py3-none-any.whl (24 kB)</span>`
+  );
+  await sleep(340);
+  term.line('<span class="out-muted">Installing collected packages: xtrshow</span>');
+
+  await bootPromise;
+
+  term.line(`<span class="out-ok">Successfully installed xtrshow-${esc(pkgVersion)}</span>`);
+  term.line();
+  term.line(
+    '<span class="out-muted">Two commands are on your PATH now: xtrshow and xtrpatch.</span>'
+  );
+  term.line(
+    '<span class="out-muted">Use the buttons above, or edit either file and run again.</span>'
+  );
+  term.line();
+}
+
 /* ── scenarios ───────────────────────────────────────────── */
 
-function loadScenario(key, { keepEdits = false } = {}) {
+function loadScenario(key, { silent = false } = {}) {
   const s = SCENARIOS[key];
   current = key;
   el.srcName.textContent = s.file;
   el.scnDesc.textContent = s.desc;
-  if (!keepEdits) {
-    el.src.value = s.seed[s.file];
-    el.patch.value = s.patch;
-  }
-  el.revert.disabled = true;
-  el.fstree.textContent = "(nothing yet)";
+  srcEd.value = s.seed[s.file];
+  patchEd.value = s.patch;
+  seeded.delete(key);
+  refreshExtract();
 
   document.querySelectorAll(".scn").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.scn === key)
   );
-}
-
-// Rebuild the scenario's working directory from its seed files. Scenarios like
-// "delete" ship auxiliary files (legacy.py) that the patch acts on but which
-// never appear in the editor, so this must run before the first apply.
-async function seedWorkdir() {
-  const s = SCENARIOS[current];
-  const seed = { ...s.seed, [s.file]: el.src.value };
-  driver.reset(current, JSON.stringify(seed));
-  seeded.add(current);
+  if (!silent) setStatus("");
 }
 
 async function ensureSeeded() {
-  if (!seeded.has(current)) await seedWorkdir();
+  if (seeded.has(current)) return;
+  const s = SCENARIOS[current];
+  driver.reset(current, JSON.stringify({ ...s.seed, [s.file]: srcEd.value }));
+  seeded.add(current);
 }
 
-/* ── actions ─────────────────────────────────────────────── */
+const setStatus = (msg, cls = "") => {
+  el.status.textContent = msg;
+  el.status.className = "status " + cls;
+};
 
-async function run() {
-  el.run.disabled = true;
+/* ── commands ────────────────────────────────────────────── */
+
+function setBusy(on) {
+  busy = on;
+  [el.run, el.revert, el.reset, el.tree, el.ls].forEach((b) => (b.disabled = on));
+}
+
+// On a narrow screen the terminal sits well below the buttons, so a command
+// would otherwise print somewhere the reader cannot see.
+function revealTerminal() {
+  const r = el.term.getBoundingClientRect();
+  if (r.top > window.innerHeight - 90 || r.bottom < 90) {
+    el.term.scrollIntoView({ block: "nearest", behavior: REDUCED ? "auto" : "smooth" });
+  }
+}
+
+// Every button routes through here: type the command, run it, print the result.
+async function command(cmdText, fn) {
+  if (busy) return;
+  setBusy(true);
   try {
     await ensureBooted();
     await ensureSeeded();
-    setStatus("Applying…");
+    revealTerminal();
+    await term.type(cmdText);
+    const res = await fn();
+    term.out(res.report);
+    term.line();
+    term.idle();
+  } catch (err) {
+    term.out(String((err && err.message) || err));
+    term.line();
+    term.idle();
+    setStatus("Something went wrong — see the terminal.", "err");
+  } finally {
+    setBusy(false);
+  }
+}
 
+async function applyPatch() {
+  await command(`xtrpatch ${PATCH_NAME}`, () => {
     const s = SCENARIOS[current];
     const res = JSON.parse(
-      driver.apply_patch(current, s.file, el.src.value, el.patch.value)
+      driver.apply_patch(current, s.file, srcEd.value, patchEd.value)
     );
 
-    let out = res.report;
-
-    // Reflect the on-disk result back into the editor, plus any file the
-    // patch created — this is the actual post-patch state, read back from
-    // Pyodide's filesystem.
-    const files = res.files;
-    if (Object.prototype.hasOwnProperty.call(files, s.file)) {
-      el.src.value = files[s.file];
+    // Reflect the real on-disk result back into the editor.
+    if (Object.prototype.hasOwnProperty.call(res.files, s.file)) {
+      srcEd.value = res.files[s.file];
+    } else {
+      res.report += `\n\n(${s.file} no longer exists — the patch deleted it)`;
     }
 
-    const others = Object.keys(files)
-      .filter((f) => f !== s.file && f !== "changes.txt")
+    const others = Object.keys(res.files)
+      .filter((f) => f !== s.file && f !== PATCH_NAME)
       .sort();
     if (others.length) {
-      out += "\n\n── other files in the working tree ──";
-      for (const f of others) {
-        out += `\n\n--- ${f} ---\n${files[f].replace(/\n$/, "")}`;
-      }
+      res.report +=
+        "\n\nOther files now in the tree: " + others.join(", ");
     }
-    if (!Object.prototype.hasOwnProperty.call(files, s.file)) {
-      out += `\n\n(${s.file} no longer exists — it was deleted by the patch)`;
-    }
-
-    write(out);
-    el.fstree.textContent = res.tree;
-    el.revert.disabled = false;
-    setStatus("Done — try editing either pane and running again.", "ok");
-  } catch (err) {
-    write(`Failed to run the demo.\n\n${err && err.message ? err.message : err}`);
-    setStatus("Error", "err");
-  } finally {
-    el.run.disabled = false;
-  }
+    refreshExtract();
+    return res;
+  });
 }
 
-async function revert() {
-  el.revert.disabled = true;
-  try {
-    await ensureBooted();
+async function revertPatch() {
+  await command(`xtrpatch --revert ${PATCH_NAME}`, () => {
     const s = SCENARIOS[current];
-    const res = JSON.parse(driver.revert(current, s.file));
+    const res = JSON.parse(driver.revert(current, patchEd.value));
     if (Object.prototype.hasOwnProperty.call(res.files, s.file)) {
-      el.src.value = res.files[s.file];
+      srcEd.value = res.files[s.file];
     }
-    write(res.report);
-    el.fstree.textContent = res.tree;
-    setStatus("Reverted from .xtrpatch/ backup.", "ok");
-  } catch (err) {
-    write(String(err));
-    setStatus("Error", "err");
-  } finally {
-    el.revert.disabled = false;
-  }
-}
-
-async function reset() {
-  loadScenario(current);
-  seeded.delete(current);
-  if (driver) await seedWorkdir();
-  write("Scenario reset.");
-  setStatus("");
+    refreshExtract();
+    return res;
+  });
 }
 
 /* ── wiring ──────────────────────────────────────────────── */
 
-document.querySelectorAll(".scn").forEach((btn) =>
-  btn.addEventListener("click", async () => {
-    loadScenario(btn.dataset.scn);
-    seeded.delete(btn.dataset.scn);
-    if (driver) await seedWorkdir();
-    write("Scenario loaded. Click Apply patch to run it.");
+el.gateGo.addEventListener("click", async () => {
+  el.gateGo.disabled = true;
+  el.gateGo.textContent = "Installing…";
+  el.gate.classList.add("is-gone");
+  setBusy(true);
+  try {
+    term.clear();
+    await runInstall();
+    refreshExtract();
+    term.idle();
     setStatus("");
-  })
+  } catch (err) {
+    term.out(`Failed to start the runtime.\n${(err && err.message) || err}`);
+    term.idle();
+    setStatus("The Python runtime could not be loaded.", "err");
+  } finally {
+    setBusy(false);
+  }
+});
+
+el.run.addEventListener("click", applyPatch);
+el.revert.addEventListener("click", revertPatch);
+el.tree.addEventListener("click", () =>
+  command("tree .", () => JSON.parse(driver.tree(current)))
+);
+el.ls.addEventListener("click", () =>
+  command("ls .xtrpatch/", () => JSON.parse(driver.ls_backups(current)))
 );
 
-el.run.addEventListener("click", run);
-el.revert.addEventListener("click", revert);
-el.reset.addEventListener("click", reset);
+el.reset.addEventListener("click", async () => {
+  if (busy) return;
+  loadScenario(current);
+  if (driver) {
+    await ensureSeeded();
+    term.dropCaret();
+    term.line('<span class="out-muted">— scenario reset —</span>');
+    term.line();
+    term.idle();
+  }
+});
 
-// Tab inserts spaces instead of leaving the textarea — indentation matters here.
-[el.src, el.patch].forEach((ta) =>
-  ta.addEventListener("keydown", (e) => {
-    if (e.key !== "Tab") return;
-    e.preventDefault();
-    const { selectionStart: a, selectionEnd: b, value } = ta;
-    ta.value = value.slice(0, a) + "    " + value.slice(b);
-    ta.selectionStart = ta.selectionEnd = a + 4;
+document.querySelectorAll(".scn").forEach((btn) =>
+  btn.addEventListener("click", async () => {
+    if (busy) return;
+    loadScenario(btn.dataset.scn);
+    if (driver) {
+      await ensureSeeded();
+      term.dropCaret();
+      term.line(
+        `<span class="out-muted">— loaded scenario: ${esc(SCENARIOS[current].label)} —</span>`
+      );
+      term.line();
+      term.idle();
+    }
   })
 );
 
@@ -267,14 +444,16 @@ document.querySelectorAll(".copy").forEach((btn) =>
       const prev = btn.textContent;
       btn.textContent = "Copied";
       btn.classList.add("done");
-      setTimeout(() => {
-        btn.textContent = prev;
-        btn.classList.remove("done");
-      }, 1400);
+      setTimeout(() => { btn.textContent = prev; btn.classList.remove("done"); }, 1400);
     } catch {
       /* clipboard blocked — the command is selectable anyway */
     }
   })
 );
 
-loadScenario("basic");
+/* ── init ────────────────────────────────────────────────── */
+
+loadScenario("basic", { silent: true });
+setBusy(true); // buttons stay inert until the gate is cleared
+term.line('<span class="out-muted">Waiting for xtrshow to be installed…</span>');
+term.idle();
