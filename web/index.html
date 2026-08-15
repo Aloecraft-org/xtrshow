@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>xtrshow — Code Extraction &amp; Patching Made Easy</title>
+<title>xtrshow | Code Extraction &amp; Patching Made Easy</title>
 <meta name="description" content="A CLI suite that closes the loop between your local codebase and AI coding assistants. Extract context, prompt, apply changes safely. Try the patcher live in your browser.">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/style.css">
-<meta property="og:title" content="xtrshow — Code Extraction &amp; Patching Made Easy">
+<meta property="og:title" content="xtrshow | Code Extraction &amp; Patching Made Easy">
 <meta property="og:description" content="Close the loop between your codebase and any LLM chat. No API keys, no agents, no daemons.">
 <meta property="og:type" content="website">
 <!-- Self-hosting the Python runtime? Point this at the directory holding the
@@ -24,7 +24,7 @@
       <span>xtrshow</span>
     </a>
     <div class="nav-links">
-      <a href="#demo">Demo</a>
+      <a href="#demo">Try It</a>
       <a href="#format">Format</a>
       <a href="#features">Features</a>
       <a href="https://github.com/Aloecraft-org/xtrshow">GitHub</a>
@@ -36,7 +36,7 @@
     <h1>Code extraction &amp; patching<br><span class="grad">made easy</span></h1>
     <p class="tagline">
       A CLI suite that closes the loop between your local codebase and AI coding
-      assistants. Works with any chat interface — including free tiers — because
+      assistants. Works with any chat interface (including free tiers) because
       the protocol is just text.
     </p>
 
@@ -96,7 +96,7 @@
   <p class="lede">
     A working shell with your file on the left, the model's reply on the right,
     and a real terminal underneath. Every command you run drives the
-    <strong>actual <code>xtrpatch</code> engine</strong> — the Python package
+    <strong>actual <code>xtrpatch</code> engine</strong>, which is the Python package
     itself, compiled to WebAssembly. Nothing is sent to a server, and both
     editors are yours to change.
   </p>
@@ -129,7 +129,7 @@
           </div>
           <button class="btn btn-primary gate-go" id="gate-go">Go</button>
           <p class="gate-fine">
-            Nothing is installed on your machine — the package runs sandboxed
+            Nothing is installed on your machine. The package runs sandboxed
             inside this tab.
           </p>
         </div>
@@ -186,7 +186,7 @@
       <div class="ide-term">
         <div class="term-bar">
           <span class="term-tab is-active">TERMINAL</span>
-          <span class="term-shell">bash — demo</span>
+          <span class="term-shell">bash: live demo</span>
           <div class="term-actions">
             <button class="tbtn tbtn-go" id="run"    title="Apply the patch">xtrpatch xpatch.txt</button>
             <button class="tbtn" id="revert" title="Revert every file the patch touched">--revert</button>
@@ -207,7 +207,7 @@
 <section class="section" id="format">
   <h2>Why not just unified diffs?</h2>
   <p class="lede">
-    LLMs are unreliable at producing valid unified diffs — line numbers drift,
+    LLMs are unreliable at producing valid unified diffs. Line numbers drift,
     context lines get hallucinated, and one bad hunk poisons the file.
     <code>xtrpatch</code> uses a Search &amp; Replace block format designed
     around how models actually fail.
@@ -280,7 +280,7 @@
     </div>
     <div class="card">
       <h3><span class="ic">↩️</span> Undo button</h3>
-      <p><code>--revert</code> restores the most recent backup — per file, or every file in a patch.</p>
+      <p><code>--revert</code> restores the most recent backup per file, or every file in a patch.</p>
     </div>
   </div>
 </section>
