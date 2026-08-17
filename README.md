@@ -83,7 +83,7 @@ LLMs are unreliable at producing valid unified diffs — line numbers drift, con
 * **Safety first:** automatic, versioned backups in `.xtrpatch/` before every modification.
 * **Checksum verification:** warns when a file was edited outside the patch loop since the last apply.
 * **Conflict detection:** overlapping hunks are caught pre-flight and skipped, never blindly stacked.
-* **Full lifecycle:** modify, insert, create files, delete sections, delete whole files (`! DELETE FILE`).
+* **Full lifecycle:** modify, insert, create files, delete sections, delete whole files (`! DELETE FILE`), replace a file wholesale (`! DELETE FILE` + a create block).
 * **Idempotent:** re-applying a patch detects already-applied hunks and skips them.
 * **Error reports:** failed applies generate a `.rpterr` bundle (original + patch + log) you can paste straight back to the LLM.
 * **Undo button:** `--revert` restores the most recent backup — per file, or for every file in a patch.
