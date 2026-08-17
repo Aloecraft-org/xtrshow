@@ -640,6 +640,28 @@ def _apply_file_deletion(filepath, patch_source_path, output_fn, log_buffer):
         save_log_file("\n".join(log_buffer), filepath, version)
 
 
+def _is_whole_file_delete(block):
+    """
+    True for a whole-file delete: no search and nothing to put back.
+
+    Covers `! DELETE FILE` and the legacy empty/empty block that doc/GEMINI.md
+    still teaches. The hint is ignored here, matching the standalone deletion
+    branch in apply_changes.
+    """
+    return not block["search"] and not block["replace"]
+
+
+def _is_whole_file_create(block):
+    """
+    True for a create-file block: empty search with a body to write.
+
+    A hint of 0 is the legacy spelling of "top of file" and means the same as
+    no hint. Any later line is refused: you cannot insert at line 20 of a file
+    the preceding hunk just deleted, so that pairing was not thought through.
+    """
+    return not block["search"] and bool(block["replace"]) and block["hint"] in (None, 0)
+
+
 def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buffer):
     """Handle file creation (empty search, non-empty replace)."""
     version = 0
@@ -663,6 +685,56 @@ def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buf
         save_log_file("\n".join(log_buffer), filepath, version)
     except Exception as e:
         output_fn(f"❌ {filepath} ... FAILED TO CREATE: {e}")
+        save_log_file("\n".join(log_buffer), filepath, version)
+
+
+def _apply_file_rewrite(filepath, blocks, patch_source_path, output_fn, log_buffer):
+    """
+    Handle whole-file replacement: `! DELETE FILE` followed by a create block.
+
+    Two documented primitives composed to say "replace this file wholesale".
+    Only this order is honoured. A lone create block against an existing file
+    stays an error, because that shape is also what a block that simply lost
+    its search text looks like, and truncating a file to the replace body on
+    that guess would be destructive. The explicit delete states the intent.
+    """
+    version = 0
+    try:
+        new_lines = blocks[1]["replace"]
+        new_content = "".join([l + "\n" for l in new_lines])
+
+        orig_len = 0
+        if os.path.exists(filepath):
+            _verify_checksum(filepath)
+            with open(filepath, "r") as f:
+                orig_len = len(f.readlines())
+            backup_path, version = create_backup(filepath)
+            if backup_path is None:
+                version = 0
+        else:
+            # Nothing to delete, so this degrades to a plain creation. Still
+            # reserve the empty backup slot so --revert has a rung to land on.
+            backup_path, version = get_backup_path(
+                Path(filepath), Path.cwd() / ".xtrpatch"
+            )
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            backup_path.touch()
+
+        if patch_source_path:
+            archive_patch_file(patch_source_path, filepath, version)
+
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as f:
+            f.write(new_content)
+
+        _save_state_checksum(filepath)
+
+        delta = len(new_lines) - orig_len
+        sign = "+" if delta >= 0 else ""
+        output_fn(f"♻️  {filepath} ... REWRITTEN (Δ{sign}{delta} lines)")
+        save_log_file("\n".join(log_buffer), filepath, version)
+    except Exception as e:
+        output_fn(f"❌ {filepath} ... FAILED TO REWRITE: {e}")
         save_log_file("\n".join(log_buffer), filepath, version)
 
 
@@ -767,6 +839,17 @@ def _process_hunks(file_lines, blocks):
             already_applied = find_match(file_lines, block["replace"])
             if already_applied:
                 hunk_res["status"] = "SKIPPED"
+            elif not block["search"] and block["hint"] is None:
+                # No search text was ever supplied, so reporting "Block Not
+                # Found" would describe a search that never ran. This is a
+                # whole-file directive that landed on a path already on disk.
+                error_occurred = True
+                hunk_res["status"] = "EMPTY_SEARCH"
+                hunk_res["detail"] = (
+                    "Stray Delete Directive"
+                    if not block["replace"]
+                    else "Cannot Create, File Exists"
+                )
             else:
                 error_occurred = True
                 hunk_res["status"] = "FAILED"
@@ -780,7 +863,9 @@ def _process_hunks(file_lines, blocks):
 def _print_hunk_report(hunk_stats, file_delta_total, filepath, output_fn):
     """Print the per-file patch report."""
     successes = [h for h in hunk_stats if h["status"] == "APPLIED"]
-    fails = [h for h in hunk_stats if h["status"] in ("FAILED", "BLOCKED")]
+    fails = [
+        h for h in hunk_stats if h["status"] in ("FAILED", "BLOCKED", "EMPTY_SEARCH")
+    ]
 
     if not fails and successes:
         file_icon = "✅ SUCCESS"
@@ -809,6 +894,8 @@ def _print_hunk_report(hunk_stats, file_delta_total, filepath, output_fn):
             line = f"   {h['id']}. 🛑 {desc:<32} [Tail Context Mismatch]"
         elif h["status"] == "CONFLICT":
             line = f"   {h['id']}. ⚡ {desc:<32} [Overlaps Earlier Block]"
+        elif h["status"] == "EMPTY_SEARCH":
+            line = f"   {h['id']}. ❌ {desc:<32} [{h['detail']}]"
         elif h["status"] == "FAILED":
             hint = f"~Line {h['hint']}" if h.get("hint") else "No Hint"
             line = f"   {h['id']}. ❌ {desc:<32} [Block Not Found] {hint}"
@@ -824,6 +911,18 @@ def apply_changes(changes_dict, patch_source_path=None):
         def output(msg):
             print(msg)
             log_buffer.append(str(msg))
+
+        # --- File Rewrite ---
+        # `! DELETE FILE` plus a create block on one path. Both hunks land in
+        # the same list, so without this they would fall through to the
+        # modification path and fail as two searchless searches.
+        if (
+            len(blocks) == 2
+            and _is_whole_file_delete(blocks[0])
+            and _is_whole_file_create(blocks[1])
+        ):
+            _apply_file_rewrite(filepath, blocks, patch_source_path, output, log_buffer)
+            continue
 
         # --- File Deletion ---
         if os.path.exists(filepath):
@@ -877,7 +976,8 @@ def apply_changes(changes_dict, patch_source_path=None):
         save_log_file("\n".join(log_buffer), filepath, version)
 
         error_occurred = any(
-            h["status"] in ("FAILED", "BLOCKED", "CONFLICT") for h in hunk_stats
+            h["status"] in ("FAILED", "BLOCKED", "CONFLICT", "EMPTY_SEARCH")
+            for h in hunk_stats
         )
         if error_occurred:
             save_error_report(filepath, version, "\n".join(log_buffer))

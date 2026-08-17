@@ -191,6 +191,29 @@ Preferred shorthand:
 
 (The legacy form — empty search **and** empty replace — still works.) A backup is taken first, so deletion is revertable.
 
+### Whole-File Replacement
+
+To port a file to a new implementation, delete it and create it again in the
+same patch. Both hunks name the same path, delete first:
+
+```text
+--- a/src/bootstrap.sh
+! DELETE FILE
+
+--- a/src/bootstrap.sh
+<<<<
+====
+#!/bin/bash
+apt-get update
+>>>>
+```
+
+This reports ♻️ REWRITTEN and backs up the original, so it is revertable like
+any other change. A create block on its own against a file that already exists
+is refused instead: that shape is also what a hunk that lost its search text
+looks like, and truncating the file to the replace body on that guess would
+throw work away.
+
 ### Section Deletion
 
 Real search block, empty replace block.

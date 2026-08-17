@@ -219,6 +219,27 @@ def calculate(x):
 >>>>
 ````
 
+**To Replace a file wholesale** (delete first, then create the same path). Use
+this rather than quoting an entire file into a search block:
+
+````text
+--- a/src/rewritten.py
+<<<< 0
+====
+>>>>
+
+--- a/src/rewritten.py
+<<<< 0
+====
+def calculate(x):
+    return x * 3
+>>>>
+````
+
+The delete must come first. A create block alone against a file that already
+exists is refused, since that is indistinguishable from a block whose search
+text went missing.
+
 **Output Examples:**
 To update `src/main.py` and `src/utils.py` together:
 

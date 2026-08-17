@@ -48,6 +48,8 @@ Tell the LLM **how** to format its output so `xtrpatch` can read it. Copy the bl
 - **Create file:** empty search block.
 - **Delete section:** real search + empty replace.
 - **Delete file:** `! DELETE FILE` on its own line (no block needed).
+- **Replace file wholesale:** `! DELETE FILE`, then a create block for the same
+  path. Use this instead of quoting a whole file into a search block.
 
 **Syntax (Illustration only. Not the output wrapper):**
 
@@ -205,6 +207,28 @@ def help_me():
 --- a/src/deprecated.py
 ! DELETE FILE
 ```
+
+### Replace File Wholesale
+Port a file to a new implementation without quoting the old one into a search
+block. The delete and the create name the same path, in that order:
+
+```text
+--- a/src/bootstrap.sh
+@ Alpine version, replaced wholesale below
+! DELETE FILE
+
+--- a/src/bootstrap.sh
+@ Debian version
+<<<<
+====
+#!/bin/bash
+apt-get update
+>>>>
+```
+
+The order matters. A create block on its own against a file that already exists
+is refused, because that is also what a block that lost its search text looks
+like, and the file would be truncated to the replace body on a guess.
 
 ---
 
