@@ -90,6 +90,13 @@ jobs:
       url: https://pypi.org/project/xtrshow/
 
     permissions:
+      # Naming any permission drops every unnamed one to `none`, so
+      # `id-token` alone would leave this job with `contents: none`. It is
+      # harmless while the job only downloads artifacts and uploads to PyPI,
+      # which is all it does today, but the first checkout, tag or release
+      # step added here would fail with a 403 that reads like an account
+      # problem. See doc/ALIGNMENT.md and technoproj's STANDARD.md.
+      contents: read
       id-token: write
 
     steps:
