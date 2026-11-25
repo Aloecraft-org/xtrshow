@@ -57,6 +57,7 @@ from datetime import datetime
 from pathlib import Path
 
 from xtrshow import XTR_DIRNAME, get_version, manifest_path, migrate_legacy_state
+from xtrshow.repatch import format_mode, format_owner
 
 
 # Default ignore patterns
@@ -189,6 +190,9 @@ def format_file_meta(path, line_count, include_hash=True):
     created = _creation_timestamp(st)
     if created is not None:
         parts.append(f"created {_format_timestamp(created)}")
+    parts.append(f"mode {format_mode(st.st_mode)}")
+    if os.name == "posix":
+        parts.append(f"owner {format_owner(st.st_uid, st.st_gid)}")
     if include_hash:
         digest = compute_sha256(path)
         if digest is not None:

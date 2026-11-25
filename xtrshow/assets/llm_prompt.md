@@ -5,7 +5,7 @@
 Files arrive as fenced blocks under a `--- a/path` header:
 
 - Content lines carry an `N:` prefix holding the file's real line numbers. **The prefix is not part of the file.** Strip it from every search and replace block, or the hunk will not match.
-- An optional `# meta:` line records size, line count, timestamps, and `sha256` — the digest of the file's bytes on disk.
+- An optional `# meta:` line records size, line count, timestamps, `mode` (permissions, e.g. `0755 (rwxr-xr-x)`), `owner` (`user:group`), and `sha256` — the digest of the file's bytes on disk.
 - Treat the digest as the file's identity. A file re-sent with the same `sha256` is byte-identical to the copy you already have; a different digest means it changed since you last saw it. Timestamps alone do not prove either.
 
 ## Writing Changes
@@ -28,6 +28,14 @@ Files arrive as fenced blocks under a `--- a/path` header:
 - **Create file:** empty search block.
 - **Delete section:** real search + empty replace.
 - **Delete file:** `! DELETE FILE` on its own line (no block needed).
+- **Replace file wholesale:** `! DELETE FILE`, then a create block for the same
+  path. Use this instead of quoting a whole file into a search block.
+- **Change permissions:** `! CHMOD <mode>` on its own line under the file header.
+  Octal (`! CHMOD 755`) or chmod-style symbolic (`! CHMOD +x`, `! CHMOD u+x,g-w`).
+- **Change owner:** `! CHOWN user:group` (or `user`, or `:group`) on its own line.
+- `! CHMOD` / `! CHOWN` run after that file's blocks, so a create block followed by
+  `! CHMOD +x` makes a new executable script. Only use them when asked or when a
+  new file must be executable; never set setuid/setgid/sticky bits.
 
 **Syntax (Illustration only. Not the output wrapper):**
 
@@ -92,6 +100,15 @@ i = builder.create_i() \
 ====
     .build()
 >>>>
+
+--- a/scripts/deploy.sh
+@ New deploy script, made executable
+<<<<
+====
+#!/bin/sh
+make release
+>>>>
+! CHMOD +x
 ````
 
 
@@ -106,6 +123,7 @@ Worked Example Notes:
 - fuzzy match: `<<<< 5:15`
 - exact wildcard: `~~~~=4` (exactly 4 lines)
 - fuzzy wildcard: `~~~~4` (as many as 4 lines)
+- `! CHMOD +x` after a create block: new file is written, then made executable
 
 **Anchoring Tips:**
 - Anchor on stable lines (e.g. function/class signatures, unique declarations)

@@ -50,6 +50,12 @@ Tell the LLM **how** to format its output so `xtrpatch` can read it. Copy the bl
 - **Delete file:** `! DELETE FILE` on its own line (no block needed).
 - **Replace file wholesale:** `! DELETE FILE`, then a create block for the same
   path. Use this instead of quoting a whole file into a search block.
+- **Change permissions:** `! CHMOD <mode>` on its own line under the file header.
+  Octal (`! CHMOD 755`) or chmod-style symbolic (`! CHMOD +x`, `! CHMOD u+x,g-w`).
+- **Change owner:** `! CHOWN user:group` (or `user`, or `:group`) on its own line.
+- `! CHMOD` / `! CHOWN` run after that file's blocks, so a create block followed by
+  `! CHMOD +x` makes a new executable script. Only use them when asked or when a
+  new file must be executable; never set setuid/setgid/sticky bits.
 
 **Syntax (Illustration only. Not the output wrapper):**
 
