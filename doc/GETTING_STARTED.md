@@ -50,12 +50,12 @@ xtrshow --no-hash           # keep the metadata line, drop the sha256 digest
 
 ### File Metadata
 
-Each exported file block includes a `# meta:` line under its header with the file's size, line count, modification date (plus creation date on platforms that track it — macOS and Windows; Linux doesn't expose true creation time), and a SHA-256 digest:
+Each exported file block includes a `# meta:` line under its header with the file's size, line count, modification date (plus creation date on platforms that track it — macOS and Windows; Linux doesn't expose true creation time), its permissions and owner, and a SHA-256 digest:
 
 ```
 --- a/src/main.py
 +++ b/src/main.py
-# meta: 4.2 KB | 128 lines | modified 2026-08-26T10:32:11-04:00 | sha256 9f2b...c41e
+# meta: 4.2 KB | 128 lines | modified 2026-08-26T10:32:11-04:00 | mode 0644 (rw-r--r--) | owner mike:staff | sha256 9f2b...c41e
 ```
 
 This gives the LLM a sense of which files are freshest without costing more than a line of context. Pass `--no-meta` to omit it. The line starts with `#`, so it's inert if it ever ends up inside a patch file.
@@ -239,6 +239,35 @@ any other change. A create block on its own against a file that already exists
 is refused instead: that shape is also what a hunk that lost its search text
 looks like, and truncating the file to the replace body on that guess would
 throw work away.
+
+### Permissions and Ownership
+
+`! CHMOD` and `! CHOWN` lines change a file's mode and owner. They go under the
+file header and run after that file's blocks, so a new script can be created
+and made executable in one patch:
+
+```text
+--- a/scripts/deploy.sh
+<<<<
+====
+#!/bin/sh
+make release
+>>>>
+! CHMOD +x
+
+--- a/etc/app.conf
+! CHMOD 640
+! CHOWN root:app
+```
+
+`! CHMOD` takes octal (`755`, `0644`) or chmod-style symbolic modes (`+x`,
+`u+x,g-w`, `go-rwx`, `a+X`). `! CHOWN` takes `user`, `user:group` or `:group`,
+by name or numeric id; it usually needs root, and a refused chown fails that
+file only. Each line reports `🔐 MODE old → new` or `👤 OWNER old → new`.
+
+The file is backed up first along with its old mode and owner, so `--revert`
+puts both back. Adding setuid, setgid or the sticky bit is refused unless you
+pass `--allow-special-modes`.
 
 ### Section Deletion
 

@@ -5,9 +5,17 @@
 import sys
 import re
 import argparse
+import json
 import os
 import shutil
+import stat
 from pathlib import Path
+
+try:  # POSIX only; owner names and chown are unavailable elsewhere.
+    import grp
+    import pwd
+except ImportError:  # pragma: no cover - Windows
+    grp = pwd = None
 
 from xtrshow import (
     XTR_DIRNAME,
@@ -18,6 +26,14 @@ from xtrshow import (
 
 # Subdirectory of .xtr/backup/ that mirrors targets living outside the cwd.
 ABS_BACKUP_PREFIX = "_abs"
+
+# `! CHMOD <mode>` / `! CHOWN <owner>` attribute directives.
+ATTR_DIRECTIVE_RE = re.compile(r"^!\s*(CHMOD|CHOWN)\s+(\S+)\s*$", re.IGNORECASE)
+
+# setuid, setgid and sticky. A patch may not add these without
+# --allow-special-modes: a model asking for setuid is almost never what the
+# person running xtrpatch meant, and the cost of being wrong is high.
+SPECIAL_MODE_BITS = stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX
 
 
 def normalize(line):
@@ -303,6 +319,25 @@ def parse_multi_file_patch(content, default_target=None):
             i += 1
             continue
 
+        # ! CHMOD +x / ! CHOWN user:group — attribute changes, applied after
+        # the file's content hunks. Kept in the same list as the blocks, with
+        # an "op" key, so the path still shows up for --revert.
+        attr_match = ATTR_DIRECTIVE_RE.match(stripped)
+        if attr_match:
+            if current_file:
+                op = attr_match.group(1).lower()
+                changes.setdefault(current_file, []).append(
+                    {
+                        "patch_line": i + 1,
+                        "op": op,
+                        "arg": attr_match.group(2),
+                        "annotation": current_annotation,
+                    }
+                )
+                current_annotation = None
+            i += 1
+            continue
+
         # Support ':' or '~' for range hints (e.g., 10:15 or 10~15)
         # ALLOW '<<' (2 brackets) as a start marker, but ONLY if the line ends immediately
         # after the hint. This prevents matching C++ streams or bitwise shifts like '<< 5;'.
@@ -364,6 +399,189 @@ def parse_multi_file_patch(content, default_target=None):
         i += 1
 
     return changes
+
+
+def _current_umask():
+    mask = os.umask(0)
+    os.umask(mask)
+    return mask
+
+
+def apply_chmod_spec(spec, current_mode, is_dir=False, umask=None):
+    """
+    Return the permission bits `chmod <spec>` would leave on a file.
+
+    Accepts octal (`755`, `0644`, `4755`) and chmod(1) symbolic clauses
+    (`+x`, `u+x,g-w`, `a=r`, `go-rwx`, `u+X`). As with chmod(1), a clause
+    with no who-letters is filtered through the umask. Raises ValueError on
+    anything else.
+    """
+    if re.fullmatch(r"[0-7]{1,4}", spec):
+        return int(spec, 8)
+
+    mode = stat.S_IMODE(current_mode)
+    who_masks = {"u": 0o4700, "g": 0o2070, "o": 0o1007, "a": 0o7777}
+    for clause in spec.split(","):
+        m = re.fullmatch(r"([ugoa]*)((?:[-+=][rwxXst]*)+)", clause)
+        if not m:
+            raise ValueError(f"invalid mode {spec!r}")
+        who = m.group(1)
+        who_mask = 0
+        for w in who or "a":
+            who_mask |= who_masks[w]
+        filt = 0o7777
+        if not who:
+            filt &= ~(_current_umask() if umask is None else umask)
+        for op, perms in re.findall(r"([-+=])([rwxXst]*)", m.group(2)):
+            bits = 0
+            for p in perms:
+                if p == "r":
+                    bits |= 0o444
+                elif p == "w":
+                    bits |= 0o222
+                elif p == "x":
+                    bits |= 0o111
+                elif p == "X":
+                    if is_dir or mode & 0o111:
+                        bits |= 0o111
+                elif p == "s":
+                    bits |= stat.S_ISUID | stat.S_ISGID
+                elif p == "t":
+                    bits |= stat.S_ISVTX
+            bits &= who_mask & filt
+            if op == "+":
+                mode |= bits
+            elif op == "-":
+                mode &= ~bits
+            else:
+                mode = (mode & ~who_mask) | bits
+    return mode
+
+
+def _resolve_id(name, kind):
+    if name.isdigit():
+        return int(name)
+    db = pwd if kind == "user" else grp
+    if db is None:
+        raise ValueError(f"cannot look up {kind} names on this platform")
+    try:
+        entry = db.getpwnam(name) if kind == "user" else db.getgrnam(name)
+    except KeyError:
+        raise ValueError(f"unknown {kind} {name!r}") from None
+    return entry.pw_uid if kind == "user" else entry.gr_gid
+
+
+def parse_chown_spec(spec):
+    """
+    Parse `user`, `user:group` or `:group` (names or numeric ids).
+
+    Returns (uid, gid) with -1 for "leave unchanged", as os.chown expects.
+    """
+    user, sep, group = spec.partition(":")
+    if not user and not group:
+        raise ValueError(f"invalid owner {spec!r}")
+    uid = _resolve_id(user, "user") if user else -1
+    gid = _resolve_id(group, "group") if group else -1
+    return uid, gid
+
+
+def format_mode(mode):
+    """`0755 (rwxr-xr-x)` — octal plus ls-style letters."""
+    mode = stat.S_IMODE(mode)
+    return f"{mode:04o} ({stat.filemode(mode)[1:]})"
+
+
+def format_owner(uid, gid):
+    """`user:group`, falling back to numeric ids that have no name."""
+    user, group = str(uid), str(gid)
+    if pwd is not None:
+        try:
+            user = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            pass
+    if grp is not None:
+        try:
+            group = grp.getgrgid(gid).gr_name
+        except KeyError:
+            pass
+    return f"{user}:{group}"
+
+
+def _is_attr_op(block):
+    return "op" in block
+
+
+def _apply_attribute_ops(filepath, ops, output_fn, allow_special_modes=False):
+    """Run `! CHMOD` / `! CHOWN` directives against an existing file, in order."""
+    for op in ops:
+        label = f"{op['op'].upper()} {op['arg']}"
+        try:
+            st = os.stat(filepath)
+            if op["op"] == "chmod":
+                old = stat.S_IMODE(st.st_mode)
+                new = apply_chmod_spec(op["arg"], st.st_mode, stat.S_ISDIR(st.st_mode))
+                if new & SPECIAL_MODE_BITS & ~old and not allow_special_modes:
+                    output_fn(
+                        f"❌ {filepath} ... {label} REFUSED "
+                        "(sets setuid/setgid/sticky; rerun with --allow-special-modes)"
+                    )
+                    continue
+                if new == old:
+                    output_fn(f"⏭️  {filepath} ... MODE {format_mode(old)} (unchanged)")
+                    continue
+                os.chmod(filepath, new)
+                output_fn(
+                    f"🔐 {filepath} ... MODE {format_mode(old)} → {format_mode(new)}"
+                )
+            else:
+                if not hasattr(os, "chown"):
+                    raise ValueError("chown is not supported on this platform")
+                uid, gid = parse_chown_spec(op["arg"])
+                old = format_owner(st.st_uid, st.st_gid)
+                os.chown(filepath, uid, gid)
+                st = os.stat(filepath)
+                new = format_owner(st.st_uid, st.st_gid)
+                output_fn(f"👤 {filepath} ... OWNER {old} → {new}")
+        except (ValueError, OSError) as e:
+            output_fn(f"❌ {filepath} ... {label} FAILED: {e}")
+
+
+def _attrs_sidecar(backup_path):
+    return Path(str(backup_path) + ".attrs")
+
+
+def _save_attrs(src, backup_path):
+    """Record mode and owner next to a backup so --revert can restore them."""
+    try:
+        st = os.stat(src)
+        _attrs_sidecar(backup_path).write_text(
+            json.dumps(
+                {"mode": f"{stat.S_IMODE(st.st_mode):04o}", "uid": st.st_uid, "gid": st.st_gid}
+            )
+        )
+    except Exception as e:
+        print(f"  ! Warning: Failed to save file attributes: {e}")
+
+
+def _restore_attrs(backup_path, target):
+    """Put back the mode and owner recorded by _save_attrs, if any."""
+    sidecar = _attrs_sidecar(backup_path)
+    if not sidecar.exists():
+        return
+    try:
+        attrs = json.loads(sidecar.read_text())
+        os.chmod(target, int(attrs["mode"], 8))
+        st = os.stat(target)
+        if (st.st_uid, st.st_gid) != (attrs["uid"], attrs["gid"]) and hasattr(os, "chown"):
+            try:
+                os.chown(target, attrs["uid"], attrs["gid"])
+            except OSError as e:
+                print(
+                    f"  ! Could not restore owner "
+                    f"{format_owner(attrs['uid'], attrs['gid'])}: {e}"
+                )
+    except Exception as e:
+        print(f"  ! Warning: Failed to restore file attributes: {e}")
 
 
 def _compute_checksum(filepath):
@@ -484,6 +702,7 @@ def create_backup(filepath):
         dest, version = get_backup_path(src, default_backup_root())
         shutil.copy2(src, dest)
         _save_checksum(dest)
+        _save_attrs(src, dest)
         return dest, version
     except Exception as e:
         print(f"  ! Warning: Failed to create backup: {e}")
@@ -611,6 +830,7 @@ def revert_file(target_file):
         print(f"  Source: {latest_backup} (v{latest_version})")
 
         shutil.copy2(latest_backup, target)
+        _restore_attrs(latest_backup, target)
         print("  ✓ File restored successfully.")
 
     except Exception as e:
@@ -642,6 +862,7 @@ def _apply_file_deletion(filepath, patch_source_path, output_fn, log_buffer):
     except Exception as e:
         output_fn(f"❌ {filepath} ... FAILED TO DELETE: {e}")
         save_log_file("\n".join(log_buffer), filepath, version)
+    return version
 
 
 def _is_whole_file_delete(block):
@@ -690,6 +911,7 @@ def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buf
     except Exception as e:
         output_fn(f"❌ {filepath} ... FAILED TO CREATE: {e}")
         save_log_file("\n".join(log_buffer), filepath, version)
+    return version
 
 
 def _apply_file_rewrite(filepath, blocks, patch_source_path, output_fn, log_buffer):
@@ -740,6 +962,7 @@ def _apply_file_rewrite(filepath, blocks, patch_source_path, output_fn, log_buff
     except Exception as e:
         output_fn(f"❌ {filepath} ... FAILED TO REWRITE: {e}")
         save_log_file("\n".join(log_buffer), filepath, version)
+    return version
 
 
 def _detect_conflicts(blocks, file_lines):
@@ -907,7 +1130,7 @@ def _print_hunk_report(hunk_stats, file_delta_total, filepath, output_fn):
         output_fn(line)
 
 
-def apply_changes(changes_dict, patch_source_path=None):
+def apply_changes(changes_dict, patch_source_path=None, allow_special_modes=False):
     """Applies parsed changes to files."""
     for filepath, blocks in changes_dict.items():
         log_buffer = []
@@ -916,81 +1139,120 @@ def apply_changes(changes_dict, patch_source_path=None):
             print(msg)
             log_buffer.append(str(msg))
 
-        # --- File Rewrite ---
-        # `! DELETE FILE` plus a create block on one path. Both hunks land in
-        # the same list, so without this they would fall through to the
-        # modification path and fail as two searchless searches.
-        if (
-            len(blocks) == 2
-            and _is_whole_file_delete(blocks[0])
-            and _is_whole_file_create(blocks[1])
-        ):
-            _apply_file_rewrite(filepath, blocks, patch_source_path, output, log_buffer)
+        content_blocks = [b for b in blocks if not _is_attr_op(b)]
+        attr_ops = [b for b in blocks if _is_attr_op(b)]
+
+        version = None
+        if content_blocks:
+            version = _apply_content_changes(
+                filepath, content_blocks, patch_source_path, output, log_buffer
+            )
+
+        if not attr_ops:
             continue
 
-        # --- File Deletion ---
-        if os.path.exists(filepath):
-            if (
-                len(blocks) == 1
-                and not blocks[0]["search"]
-                and not blocks[0]["replace"]
-            ):
-                _apply_file_deletion(filepath, patch_source_path, output, log_buffer)
-                continue
-
-        # --- File Creation ---
         if not os.path.exists(filepath):
-            if (
-                len(blocks) == 1
-                and not blocks[0]["search"]
-                and not blocks[0]["replace"]
-            ):
-                output(f"⏭️  {filepath} ... ALREADY ABSENT (nothing to delete)")
-                continue
-            if len(blocks) == 1 and not blocks[0]["search"]:
-                _apply_file_creation(
-                    filepath, blocks, patch_source_path, output, log_buffer
+            for op in attr_ops:
+                output(
+                    f"❌ {filepath} ... {op['op'].upper()} {op['arg']} FAILED: "
+                    "file does not exist"
                 )
-                continue
-            else:
-                output(f"❌ {filepath} ... NOT FOUND (Cannot modify missing file)")
-                continue
+        else:
+            if version is None:
+                # Attribute-only change: back up first so --revert can put the
+                # old mode and owner back.
+                backup_path, version = create_backup(filepath)
+                if backup_path and patch_source_path:
+                    archive_patch_file(patch_source_path, filepath, version)
+                elif not backup_path:
+                    version = 0
+            _apply_attribute_ops(filepath, attr_ops, output, allow_special_modes)
+        save_log_file("\n".join(log_buffer), filepath, version or 0)
 
-        # --- Modification ---
-        _verify_checksum(filepath)
-        backup_path, version = create_backup(filepath)
-        if backup_path and patch_source_path:
-            archive_patch_file(patch_source_path, filepath, version)
-        elif not backup_path:
-            version = 0
 
-        try:
-            with open(filepath, "r") as f:
-                file_lines = f.readlines()
-        except Exception as e:
-            output(f"❌ {filepath} ... ERROR READING: {e}")
-            continue
+def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buffer):
+    """
+    Apply one file's search/replace blocks.
 
-        error_occurred, file_delta_total, hunk_stats = _process_hunks(
-            file_lines, blocks
+    Returns the backup version written, or None when nothing was backed up.
+    """
+    # --- File Rewrite ---
+    # `! DELETE FILE` plus a create block on one path. Both hunks land in
+    # the same list, so without this they would fall through to the
+    # modification path and fail as two searchless searches.
+    if (
+        len(blocks) == 2
+        and _is_whole_file_delete(blocks[0])
+        and _is_whole_file_create(blocks[1])
+    ):
+        return _apply_file_rewrite(
+            filepath, blocks, patch_source_path, output, log_buffer
         )
 
-        _print_hunk_report(hunk_stats, file_delta_total, filepath, output)
+    # --- File Deletion ---
+    if os.path.exists(filepath):
+        if (
+            len(blocks) == 1
+            and not blocks[0]["search"]
+            and not blocks[0]["replace"]
+        ):
+            return _apply_file_deletion(
+                filepath, patch_source_path, output, log_buffer
+            )
 
-        save_log_file("\n".join(log_buffer), filepath, version)
+    # --- File Creation ---
+    if not os.path.exists(filepath):
+        if (
+            len(blocks) == 1
+            and not blocks[0]["search"]
+            and not blocks[0]["replace"]
+        ):
+            output(f"⏭️  {filepath} ... ALREADY ABSENT (nothing to delete)")
+            return None
+        if len(blocks) == 1 and not blocks[0]["search"]:
+            return _apply_file_creation(
+                filepath, blocks, patch_source_path, output, log_buffer
+            )
+        else:
+            output(f"❌ {filepath} ... NOT FOUND (Cannot modify missing file)")
+            return None
 
-        error_occurred = any(
-            h["status"] in ("FAILED", "BLOCKED", "CONFLICT", "EMPTY_SEARCH")
-            for h in hunk_stats
-        )
-        if error_occurred:
-            save_error_report(filepath, version, "\n".join(log_buffer))
+    # --- Modification ---
+    _verify_checksum(filepath)
+    backup_path, version = create_backup(filepath)
+    if backup_path and patch_source_path:
+        archive_patch_file(patch_source_path, filepath, version)
+    elif not backup_path:
+        version = 0
 
-        successes = [h for h in hunk_stats if h["status"] == "APPLIED"]
-        if successes:
-            with open(filepath, "w") as f:
-                f.writelines(file_lines)
-        _save_state_checksum(filepath)
+    try:
+        with open(filepath, "r") as f:
+            file_lines = f.readlines()
+    except Exception as e:
+        output(f"❌ {filepath} ... ERROR READING: {e}")
+        return version
+
+    error_occurred, file_delta_total, hunk_stats = _process_hunks(
+        file_lines, blocks
+    )
+
+    _print_hunk_report(hunk_stats, file_delta_total, filepath, output)
+
+    save_log_file("\n".join(log_buffer), filepath, version)
+
+    error_occurred = any(
+        h["status"] in ("FAILED", "BLOCKED", "CONFLICT", "EMPTY_SEARCH")
+        for h in hunk_stats
+    )
+    if error_occurred:
+        save_error_report(filepath, version, "\n".join(log_buffer))
+
+    successes = [h for h in hunk_stats if h["status"] == "APPLIED"]
+    if successes:
+        with open(filepath, "w") as f:
+            f.writelines(file_lines)
+    _save_state_checksum(filepath)
+    return version
 
 
 def main():
@@ -1004,6 +1266,11 @@ def main():
 
     parser.add_argument(
         "--revert", action="store_true", help="Revert file(s) to latest backup"
+    )
+    parser.add_argument(
+        "--allow-special-modes",
+        action="store_true",
+        help="Let ! CHMOD set setuid, setgid or the sticky bit",
     )
     parser.add_argument(
         "args", nargs="*", help="File to revert, or Patch file to apply"
@@ -1063,7 +1330,11 @@ def main():
         print("No valid blocks found in patch file.")
         sys.exit(1)
 
-    apply_changes(changes, patch_source_path=patch_path)
+    apply_changes(
+        changes,
+        patch_source_path=patch_path,
+        allow_special_modes=args.allow_special_modes,
+    )
 
 
 if __name__ == "__main__":

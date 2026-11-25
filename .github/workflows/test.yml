@@ -13,7 +13,9 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to 26.04, which ships no Python 3.9 build for
+    # setup-python. Pin the image so the matrix keeps covering 3.9.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12"]
