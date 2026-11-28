@@ -155,6 +155,95 @@ xtrpatch --revert changes.patch  # revert every file targeted by a patch
 
 Revert restores the **most recent** backup — run it repeatedly to walk further back.
 
+### Committing with Git
+
+Add `-gc` (`--git-commit`) and `xtrpatch` commits what it changed, on whatever branch is checked out:
+
+```bash
+xtrpatch -gc changes.patch
+```
+
+The commit holds only the files the patch changed. Backups under `.xtr/`, the patch file itself, and any other work in your tree, staged or not, are left out. The message is built from the patch's `@` comments:
+
+```
+[xtrpatch] Add timeout to foo (+2 more)
+
+a.py
+  - Add timeout to foo
+  - Default msg param on bar
+b.py
+  - Set x to 2
+old.py
+  - Delete file
+```
+
+The subject is the first comment, plus a count of the rest. A patch with no comments gets `[xtrpatch] Patch a.py` or `[xtrpatch] Patch 3 files`. Paths are relative to the repository root.
+
+| Flag | Effect |
+| --- | --- |
+| `-gc`, `--git-commit` | Commit the changed files on the current branch |
+| `-gmp`, `--git-msg-prefix PREFIX` | Replace the `[xtrpatch] ` prefix (`-gmp ""` for none) |
+| `--git-allow-dirty` | Commit target files whole, earlier uncommitted changes included |
+| `--git-on-error ask\|commit\|skip` | What to do when some changes failed (default `ask`) |
+
+The last three need `-gc`. Without `-gc`, `xtrpatch` never runs git.
+
+**Checked before anything is written.** `xtrpatch -gc` stops, with no file touched, when git is not installed, you are not in a repository, a merge, rebase, cherry-pick or revert is in progress, or git has no `user.name` / `user.email` to commit with.
+
+**Files that already have uncommitted changes.** Git commits whole files, so a target with earlier edits would carry them into the patch's commit. `xtrpatch` stops and asks instead:
+
+```
+Found uncommitted changes:
+  src/app.py
+
+Stash and commit? [y/N]
+```
+
+Answering `y` stashes those files, applies and commits the patch, and puts your changes back on top. Only the listed files are stashed. Three things to know:
+
+* The patch is applied to the **committed** version of those files. If it was written against your uncommitted edits, some hunks may not match.
+* If your changes and the patch touched the same lines, putting them back conflicts. The commit stands, the file gets conflict markers, and your changes stay in `git stash list` until you resolve it.
+* It refuses if anything is already staged, or if a target is untracked. Commit or unstage first, or use `--git-allow-dirty`.
+
+With no terminal attached there is nobody to ask, so it stops. Pass `--git-allow-dirty` to commit the earlier changes along with the patch.
+
+**When some hunks fail.** `xtrpatch` asks whether to commit what did apply. A partial commit says so:
+
+```
+[xtrpatch] Add timeout to foo
+
+a.py
+  - Add timeout to foo
+
+Not applied:
+a.py
+  - Rename handler
+```
+
+With no terminal it does not commit. `--git-on-error commit` and `--git-on-error skip` answer the question in advance. Either way the patch itself behaves as it always does: hunks that applied stay applied.
+
+**Hooks** run as for any commit. If one rejects the commit, the changes are left applied and staged.
+
+**Exit code.** With `-gc`, `xtrpatch` exits `0` when the commit was made or there was nothing to commit, and `1` when it stopped, did not commit because of failures, the commit failed, or stashed changes could not be put back cleanly.
+
+**Reverting.** `--revert` takes the same flags and follows the same rules:
+
+```bash
+xtrpatch --revert -gc changes.patch
+```
+
+```
+[xtrpatch] Revert: Add timeout to foo (+2 more)
+
+a.py
+  - Add timeout to foo
+  - Default msg param on bar
+b.py
+  - Set x to 2
+```
+
+The comments come from the patch archived beside the backup being restored, so the message describes the change actually undone even if a later patch touched the file.
+
 ---
 
 ## 3. Patch File Specification

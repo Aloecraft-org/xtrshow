@@ -89,6 +89,7 @@ LLMs are unreliable at producing valid unified diffs — line numbers drift, con
 * **Idempotent:** re-applying a patch detects already-applied hunks and skips them.
 * **Error reports:** failed applies generate a `.rpterr` bundle (original + patch + log) you can paste straight back to the LLM.
 * **Undo button:** `--revert` restores the most recent backup — per file, or for every file in a patch.
+* **Git commit:** `-gc` commits exactly the files the patch changed, with the patch's `@` comments as the message. Works with `--revert` too. Every git check runs before a file is touched.
 
 ## License
 
