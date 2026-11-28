@@ -9,6 +9,9 @@ where this module is absent (the web demo vendors repatch.py on its own).
 
 The shape of a run:
 
+(check_requires, for `! REQUIRES <commit>` lines, also lives here but is
+independent of --git-commit.)
+
     1. prepare()  every check that can fail, before one file is written
     2. the patch (or revert) runs
     3. the files it changed, and only those, are staged and committed
@@ -21,6 +24,7 @@ would take the whole file. So the run stops unless the user allows that
 commit.
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -74,6 +78,71 @@ def _first_line(text):
 
 def _one_line(text):
     return " ".join(str(text).split())
+
+
+def _plain_git(*args):
+    return subprocess.run(
+        ["git"] + list(args),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+_COMMIT_HASH = re.compile(r"^[0-9a-fA-F]{4,64}$")
+
+
+def check_requires(commits):
+    """
+    Check a patch's `! REQUIRES <commit>` lines against the current checkout.
+
+    A requirement is met when the commit is HEAD or one of its ancestors:
+    "on or after". Returns a list of problems to show the user, empty when
+    every requirement is met.
+
+    Only hashes are accepted. A branch name would be met or not depending on
+    where that branch happens to point on this machine, which is not what
+    the patch's author meant, and refusing anything else also keeps a patch
+    from handing git an option.
+    """
+    listed = ", ".join(commits)
+    plural = "commits" if len(commits) > 1 else "commit"
+    if shutil.which("git") is None:
+        return [
+            f"This patch needs {plural} {listed}, but git is not installed, "
+            "so that cannot be checked."
+        ]
+    inside = _plain_git("rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return [
+            f"This patch needs {plural} {listed}, but this is not a git "
+            "repository, so that cannot be checked."
+        ]
+
+    problems = []
+    for commit in commits:
+        if not _COMMIT_HASH.match(commit):
+            problems.append(
+                f"This patch has `! REQUIRES {commit}`, which is not a commit hash."
+            )
+            continue
+        known = _plain_git("rev-parse", "-q", "--verify", commit + "^{commit}")
+        if known.returncode != 0:
+            problems.append(
+                f"This patch needs commit {commit}, which this clone does not "
+                "have. Fetch or pull first."
+            )
+            continue
+        ancestor = _plain_git(
+            "merge-base", "--is-ancestor", known.stdout.strip(), "HEAD"
+        )
+        if ancestor.returncode != 0:
+            problems.append(
+                f"This patch needs commit {commit}, which is not in your "
+                "current branch. Pull or merge it first."
+            )
+    return problems
 
 
 def build_message(prefix, committed, not_applied, revert=False):

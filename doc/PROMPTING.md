@@ -56,6 +56,14 @@ Tell the LLM **how** to format its output so `xtrpatch` can read it. Copy the bl
 - `! CHMOD` / `! CHOWN` run after that file's blocks, so a create block followed by
   `! CHMOD +x` makes a new executable script. Only use them when asked or when a
   new file must be executable; never set setuid/setgid/sticky bits.
+- **Rename across a file:** `! REPLACE old_name => new_name` on its own line under
+  the file header. Literal, case-sensitive, whole words only, every occurrence in
+  that file. Use it instead of a pile of one-line hunks. It runs after that
+  file's blocks, so write those blocks with the names as they are now. Each file
+  that uses the name needs its own line.
+- **Built on a specific commit:** if the patch only makes sense on top of a
+  commit (one you made or were told about), put `! REQUIRES <commit hash>` on
+  the first line, before any file header. Otherwise leave it out.
 
 **Comments (`@`):**
 
@@ -66,7 +74,7 @@ Tell the LLM **how** to format its output so `xtrpatch` can read it. Copy the bl
   `@ Add timeout to foo`, not `@ fix`, `@ update` or `@ step 2`.
 - One `@` line per hunk. A second `@` line replaces the first.
 - Lead with the main change: put the most important hunk first.
-- `! DELETE FILE`, `! CHMOD` and `! CHOWN` take a comment on the line above.
+- `! DELETE FILE`, `! REPLACE`, `! CHMOD` and `! CHOWN` take a comment on the line above.
   Say why a file is being deleted.
 - For a wholesale replace, put the comment on the create block.
 
@@ -227,6 +235,27 @@ def help_me():
 @ Remove deprecated module, nothing imports it
 ! DELETE FILE
 ```
+
+### Rename Across a File
+```text
+--- a/src/client.py
+@ Rename fetch_all to fetch_pages
+! REPLACE fetch_all => fetch_pages
+```
+
+Literal, case-sensitive and whole-word: `prefetch_all` and `fetch_all_v2` are
+left alone. It runs after the file's other blocks.
+
+### Require a Commit
+```text
+! REQUIRES 3f9c2ab
+
+--- a/src/client.py
+...
+```
+
+First line of the patch. `xtrpatch` refuses to apply unless that commit is in
+the current branch.
 
 ### Replace File Wholesale
 Port a file to a new implementation without quoting the old one into a search

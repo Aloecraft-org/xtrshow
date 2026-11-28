@@ -358,6 +358,73 @@ The file is backed up first along with its old mode and owner, so `--revert`
 puts both back. Adding setuid, setgid or the sticky bit is refused unless you
 pass `--allow-special-modes`.
 
+### Renaming (`! REPLACE`)
+
+`! REPLACE old => new` renames every occurrence of a name in one file. It goes
+under the file header, like `! CHMOD`:
+
+```text
+--- a/src/client.py
+@ Rename fetch_all to fetch_pages
+! REPLACE fetch_all => fetch_pages
+```
+
+* **Literal.** `old` and `new` are plain text, not patterns. `a.b` matches only
+  `a.b`.
+* **Whole words.** `count` does not match inside `discount` or `count_total`.
+  The edge is only required where `old` itself starts or ends with a letter,
+  digit or underscore, so `! REPLACE -> => .` works too.
+* **Case-sensitive**, and it does not know about strings or comments: every
+  whole-word occurrence in the file changes.
+* **One file per line.** A name used in three files needs the line under each
+  of the three headers.
+* **Spaces around `=>` are required.** The first ` => ` on the line separates
+  the two sides.
+
+It runs after that file's search/replace blocks and before `! CHMOD` /
+`! CHOWN`, so blocks in the same patch are written against the old names and
+whatever they add is renamed along with the rest. Several `! REPLACE` lines
+run in the order written.
+
+Each line reports `🔁 REPLACE old => new (N places)`. A line that matches
+nothing is a failure, unless `new` is already present, which is reported as
+🧠 Already Applied the way a re-run hunk is. A malformed line fails rather
+than being skipped. The file is backed up first, so `--revert` undoes it.
+
+### Requiring a Commit (`! REQUIRES`)
+
+A patch can say which commit it builds on:
+
+```text
+! REQUIRES 3f9c2ab
+
+--- a/src/client.py
+@ Use the new helper
+...
+```
+
+Before writing anything, `xtrpatch` checks that the commit is your current
+`HEAD` or an ancestor of it. If you have not pulled it yet, the patch is
+refused with nothing applied:
+
+```
+This patch needs commit 3f9c2ab, which is not in your current branch. Pull or merge it first.
+Pass --ignore-requires to apply anyway.
+Nothing was applied.
+```
+
+* The value must be a commit hash, short or full. Branch and tag names are
+  rejected, since they can point somewhere else on your machine.
+* Put it on the first line. Several lines are allowed, and all must be met.
+* It is checked whether or not you use `-gc`. Outside a git repository the
+  requirement cannot be checked, which also stops the run.
+* On a terminal you are asked `Apply anyway? [y/N]`. Otherwise pass
+  `--ignore-requires`. You will want that after a squash merge or a rebase,
+  where the change is present but the original hash is gone from history.
+* `--revert` does not check it.
+
+Versions of `xtrpatch` before this feature ignore the line.
+
 ### Section Deletion
 
 Real search block, empty replace block.

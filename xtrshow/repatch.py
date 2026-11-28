@@ -30,6 +30,14 @@ ABS_BACKUP_PREFIX = "_abs"
 # `! CHMOD <mode>` / `! CHOWN <owner>` attribute directives.
 ATTR_DIRECTIVE_RE = re.compile(r"^!\s*(CHMOD|CHOWN)\s+(\S+)\s*$", re.IGNORECASE)
 
+# `! REPLACE old => new`: a literal, whole-word rename across one file.
+REPLACE_DIRECTIVE_RE = re.compile(r"^!\s*REPLACE\b(.*)$", re.IGNORECASE)
+REPLACE_ARGS_RE = re.compile(r"^\s+(\S.*?)\s+=>\s+(\S.*?)\s*$")
+
+# `! REQUIRES <commit>`: the patch builds on that commit.
+REQUIRES_DIRECTIVE_RE = re.compile(r"^!\s*REQUIRES\s+(\S+)\s*$", re.IGNORECASE)
+BLOCK_OPEN_RE = re.compile(r"^(?:<<<<|<<)\s*(\d+)?(?:[:~](\d+))?\s*$")
+
 # setuid, setgid and sticky. A patch may not add these without
 # --allow-special-modes: a model asking for setuid is almost never what the
 # person running xtrpatch meant, and the cost of being wrong is high.
@@ -338,10 +346,32 @@ def parse_multi_file_patch(content, default_target=None):
             i += 1
             continue
 
+        # ! REPLACE old => new — whole-word rename, applied after the file's
+        # hunks. A line that starts like one but does not parse is kept, with
+        # no `old`, so it is reported as a failure rather than dropped: a
+        # rename that silently does nothing is worse than one that complains.
+        replace_match = REPLACE_DIRECTIVE_RE.match(stripped)
+        if replace_match:
+            if current_file:
+                parts = REPLACE_ARGS_RE.match(replace_match.group(1))
+                changes.setdefault(current_file, []).append(
+                    {
+                        "patch_line": i + 1,
+                        "op": "replace",
+                        "old": parts.group(1) if parts else None,
+                        "new": parts.group(2) if parts else None,
+                        "raw": stripped,
+                        "annotation": current_annotation,
+                    }
+                )
+                current_annotation = None
+            i += 1
+            continue
+
         # Support ':' or '~' for range hints (e.g., 10:15 or 10~15)
         # ALLOW '<<' (2 brackets) as a start marker, but ONLY if the line ends immediately
         # after the hint. This prevents matching C++ streams or bitwise shifts like '<< 5;'.
-        block_match = re.match(r"^(?:<<<<|<<)\s*(\d+)?(?:[:~](\d+))?\s*$", stripped)
+        block_match = BLOCK_OPEN_RE.match(stripped)
 
         if block_match:
             block_start_line = i + 1
@@ -399,6 +429,32 @@ def parse_multi_file_patch(content, default_target=None):
         i += 1
 
     return changes
+
+
+def parse_requires(content):
+    """
+    The commits a patch says it builds on: every `! REQUIRES <commit>` line
+    outside a search/replace block, in order, without duplicates.
+
+    Kept apart from parse_multi_file_patch because a requirement belongs to
+    the patch, not to one of its files. Lines inside a block are skipped: a
+    patch to this project's own documentation may well contain the directive
+    as text it is adding.
+    """
+    found = []
+    in_block = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if in_block:
+            in_block = stripped != ">>>>"
+            continue
+        if BLOCK_OPEN_RE.match(stripped):
+            in_block = True
+            continue
+        match = REQUIRES_DIRECTIVE_RE.match(stripped)
+        if match and match.group(1) not in found:
+            found.append(match.group(1))
+    return found
 
 
 def _current_umask():
@@ -543,7 +599,90 @@ def result_changed(result):
 
 
 def _is_attr_op(block):
-    return "op" in block
+    return block.get("op") in ("chmod", "chown")
+
+
+def _is_replace_op(block):
+    return block.get("op") == "replace"
+
+
+def _op_label(op):
+    """How a directive is named in reports when it has no `@` comment."""
+    if _is_replace_op(op):
+        if op["old"] is None:
+            return op["raw"].lstrip("! ").strip()
+        return f"REPLACE {op['old']} => {op['new']}"
+    return f"{op['op'].upper()} {op['arg']}"
+
+
+def _word_pattern(text):
+    """
+    A regex for `text` taken literally, as a whole word.
+
+    The boundary is only demanded at an end that is itself a word character:
+    `count` must not match inside `discount`, but `->` or `.old` have no word
+    edge to respect on that side.
+    """
+    head = r"(?<!\w)" if re.match(r"\w", text[0]) else ""
+    tail = r"(?!\w)" if re.match(r"\w", text[-1]) else ""
+    return re.compile(head + re.escape(text) + tail)
+
+
+def _apply_replace_ops(filepath, ops, output_fn, items=None):
+    """
+    Run `! REPLACE old => new` directives against an existing file, in order.
+
+    Each is literal and whole-word. One that finds nothing is a failure,
+    unless `new` is already there, which is what a re-run looks like. Returns
+    True if any directive failed.
+    """
+    outcomes = [
+        _record(items, op, "FAILED", auto_label=_op_label(op)) for op in ops
+    ]
+    try:
+        # newline="" both ways: a rename has no business changing line endings.
+        with open(filepath, "r", newline="") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        for op in ops:
+            output_fn(f"❌ {filepath} ... {_op_label(op)} FAILED: {e}")
+        return True
+
+    changed = False
+    for op, outcome in zip(ops, outcomes):
+        label = _op_label(op)
+        old, new = op["old"], op["new"]
+        if old is None:
+            output_fn(
+                f"❌ {filepath} ... {label} FAILED: expected `! REPLACE old => new`"
+            )
+            continue
+        if old == new:
+            output_fn(f"❌ {filepath} ... {label} FAILED: old and new are the same")
+            continue
+        text, count = _word_pattern(old).subn(lambda _m, new=new: new, text)
+        if count:
+            changed = True
+            outcome["status"] = "APPLIED"
+            places = "place" if count == 1 else "places"
+            output_fn(f"🔁 {filepath} ... {label} ({count} {places})")
+        elif _word_pattern(new).search(text):
+            outcome["status"] = "SKIPPED"
+            output_fn(f"🧠 {filepath} ... {label} [Already Applied]")
+        else:
+            output_fn(f"❌ {filepath} ... {label} FAILED: no whole-word match")
+
+    if changed:
+        try:
+            with open(filepath, "w", newline="") as f:
+                f.write(text)
+        except OSError as e:
+            for outcome in outcomes:
+                if outcome["status"] == "APPLIED":
+                    outcome["status"] = "FAILED"
+            output_fn(f"❌ {filepath} ... FAILED TO WRITE: {e}")
+        _save_state_checksum(filepath)
+    return any(o["status"] == "FAILED" for o in outcomes)
 
 
 def _apply_attribute_ops(
@@ -551,7 +690,7 @@ def _apply_attribute_ops(
 ):
     """Run `! CHMOD` / `! CHOWN` directives against an existing file, in order."""
     for op in ops:
-        label = f"{op['op'].upper()} {op['arg']}"
+        label = _op_label(op)
         # Assume failure until a branch below says otherwise, so an early
         # `continue` cannot leave a refused directive looking successful.
         outcome = _record(items, op, "FAILED", auto_label=label)
@@ -1248,7 +1387,8 @@ def apply_changes(changes_dict, patch_source_path=None, allow_special_modes=Fals
             print(msg)
             log_buffer.append(str(msg))
 
-        content_blocks = [b for b in blocks if not _is_attr_op(b)]
+        content_blocks = [b for b in blocks if "op" not in b]
+        replace_ops = [b for b in blocks if _is_replace_op(b)]
         attr_ops = [b for b in blocks if _is_attr_op(b)]
 
         version = None
@@ -1257,23 +1397,30 @@ def apply_changes(changes_dict, patch_source_path=None, allow_special_modes=Fals
                 filepath, content_blocks, patch_source_path, output, log_buffer, items
             )
 
-        if not attr_ops:
+        # Directives run after the file's hunks, renames before attributes.
+        if not replace_ops and not attr_ops:
             continue
 
         if not os.path.exists(filepath):
-            for op in attr_ops:
-                label = f"{op['op'].upper()} {op['arg']}"
+            for op in replace_ops + attr_ops:
+                label = _op_label(op)
                 _record(items, op, "FAILED", auto_label=label)
                 output(f"❌ {filepath} ... {label} FAILED: file does not exist")
         else:
             if version is None:
-                # Attribute-only change: back up first so --revert can put the
-                # old mode and owner back.
+                # Directive-only change: back up first so --revert can put the
+                # old contents, mode and owner back.
+                if replace_ops:
+                    _verify_checksum(filepath)
                 backup_path, version = create_backup(filepath)
                 if backup_path and patch_source_path:
                     archive_patch_file(patch_source_path, filepath, version)
                 elif not backup_path:
                     version = 0
+            if replace_ops and _apply_replace_ops(
+                filepath, replace_ops, output, items
+            ):
+                save_error_report(filepath, version, "\n".join(log_buffer))
             _apply_attribute_ops(
                 filepath, attr_ops, output, allow_special_modes, items
             )
@@ -1394,6 +1541,33 @@ def _revert_targets(candidate):
     return [candidate]
 
 
+def _requirements_met(requires, ignore):
+    """
+    Check the patch's `! REQUIRES <commit>` lines before anything is written.
+    Returns False when the run should stop.
+
+    Independent of --git-commit: the point is to not apply a patch on top of
+    a checkout that is missing the work it builds on, committing or not.
+    """
+    if not requires:
+        return True
+    if ignore:
+        print(f"Skipping the commit check ({', '.join(requires)}): --ignore-requires.")
+        return True
+
+    from xtrshow import gitcommit
+
+    problems = gitcommit.check_requires(requires)
+    if not problems:
+        return True
+    for problem in problems:
+        print(problem)
+    if gitcommit.is_interactive():
+        return gitcommit.confirm("Apply anyway?")
+    print("Pass --ignore-requires to apply anyway.")
+    return False
+
+
 def _run(args, paths, action, revert=False):
     """
     Run `action` and return the exit code. With --git-commit the run is
@@ -1440,7 +1614,7 @@ def main():
         help="Let ! CHMOD set setuid, setgid or the sticky bit",
     )
     git_group = parser.add_argument_group(
-        "git", "Commit what the patch (or --revert) changed. Needs a git repository."
+        "git", "Commit what the patch (or --revert) changed, and check what it builds on."
     )
     git_group.add_argument(
         "-gc",
@@ -1459,6 +1633,11 @@ def main():
         action="store_true",
         help="Commit target files whole even if they already had uncommitted "
         "changes, instead of asking to stash them",
+    )
+    git_group.add_argument(
+        "--ignore-requires",
+        action="store_true",
+        help="Apply even if a `! REQUIRES <commit>` line in the patch is not met",
     )
     git_group.add_argument(
         "--git-on-error",
@@ -1522,6 +1701,10 @@ def main():
 
     if not changes:
         print("No valid blocks found in patch file.")
+        sys.exit(1)
+
+    if not _requirements_met(parse_requires(content), args.ignore_requires):
+        print("Nothing was applied.")
         sys.exit(1)
 
     sys.exit(

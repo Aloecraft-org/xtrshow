@@ -1481,6 +1481,324 @@ def test_message_not_applied_lists_only_failures():
     assert "b.py" not in msg
 
 
+# --- ! REPLACE in a commit --------------------------------------------------
+
+
+def test_rename_directive_is_committed(repo, run):
+    patch = "--- a/a.py\n@ Rename bar to baz\n! REPLACE bar => baz\n"
+    code, out = run("-gc", write_patch(patch))
+    assert code == 0, out
+    assert "def baz(msg):" in git("show", "HEAD:a.py")
+    assert last_message() == "[xtrpatch] Rename bar to baz\n\na.py\n  - Rename bar to baz"
+
+
+def test_rename_directive_without_a_comment(repo, run):
+    code, out = run("-gc", write_patch("--- a/a.py\n! REPLACE bar => baz\n"))
+    assert code == 0, out
+    assert last_message() == "[xtrpatch] Patch a.py\n\na.py\n  - REPLACE bar => baz"
+
+
+def test_failed_rename_counts_as_a_failure(repo, run):
+    patch = PATCH_FOO + "--- a/a.py\n@ Rename nothing\n! REPLACE nothing => something\n"
+    code, out = run("-gc", write_patch(patch))
+    assert code == 1
+    assert commit_count() == 1
+
+    git("checkout", "-q", "--", "a.py")
+    code, out = run("-gc", "--git-on-error", "commit", write_patch(patch, "again.patch"))
+    assert code == 0, out
+    assert last_message().endswith("Not applied:\na.py\n  - Rename nothing")
+
+
+def test_revert_of_a_rename_is_committed(repo, run):
+    patch = write_patch("--- a/a.py\n@ Rename bar to baz\n! REPLACE bar => baz\n")
+    run("-gc", patch)
+    code, out = run("--revert", "-gc", patch)
+    assert code == 0, out
+    assert git("show", "HEAD:a.py") == A_PY
+    assert last_message().splitlines()[0] == "[xtrpatch] Revert: Rename bar to baz"
+
+
+# --- ! REQUIRES <commit> ----------------------------------------------------
+
+
+def head(cwd=None, short=False):
+    args = ["rev-parse"] + (["--short"] if short else []) + ["HEAD"]
+    return git(*args, cwd=cwd).strip()
+
+
+def requiring(commit, body=PATCH_FOO):
+    return f"! REQUIRES {commit}\n\n{body}"
+
+
+def test_parse_requires():
+    parse = repatch.parse_requires
+    assert parse(PATCH_FOO) == []
+    assert parse("! REQUIRES abc1234\n" + PATCH_FOO) == ["abc1234"]
+    assert parse("!requires abc1234\n  ! Requires   def5678  \n") == ["abc1234", "def5678"]
+    assert parse("! REQUIRES abc1234\n! REQUIRES abc1234\n") == ["abc1234"]
+    # Anywhere outside a block counts, under a file header included.
+    assert parse(PATCH_FOO + "! REQUIRES abc1234\n") == ["abc1234"]
+    assert parse("--- a/a.py\n! REQUIRES abc1234\n" + PATCH_FOO) == ["abc1234"]
+    # Not a requirement: no commit, or trailing words.
+    assert parse("! REQUIRES\n! REQUIRES abc1234 please\n") == []
+
+
+def test_parse_requires_ignores_text_inside_blocks():
+    patch = (
+        "--- a/doc.md\n<<<<\n! REQUIRES aaaa111\n====\n! REQUIRES bbbb222\n"
+        "====\n! REQUIRES cccc333\n>>>>\n! REQUIRES dddd444\n"
+        "--- a/doc.md\n<< 3\n! REQUIRES eeee555\n====\n>>>>\n"
+    )
+    assert repatch.parse_requires(patch) == ["dddd444"]
+
+
+def test_requires_line_does_not_disturb_the_patch(repo):
+    changes = parse_multi_file_patch(requiring("abc1234"))
+    assert list(changes) == ["a.py"] and len(changes["a.py"]) == 1
+
+
+@pytest.mark.parametrize("short", [False, True])
+def test_requires_head_itself(repo, run, short):
+    code, out = run(write_patch(requiring(head(short=short))))
+    assert code == 0, out
+    assert "timeout=30" in (repo / "a.py").read_text()
+
+
+def test_requires_an_ancestor(repo, run):
+    first = head()
+    (repo / "b.py").write_text("y = 1\n")
+    git("add", ".")
+    git("commit", "-qm", "second")
+    code, out = run(write_patch(requiring(first.upper())))
+    assert code == 0, out
+    assert "timeout=30" in (repo / "a.py").read_text()
+
+
+def test_requires_a_commit_on_another_branch(repo, run):
+    git("checkout", "-qb", "theirs")
+    (repo / "b.py").write_text("y = 1\n")
+    git("add", ".")
+    git("commit", "-qm", "their work")
+    theirs = head()
+    git("checkout", "-q", "main")
+
+    code, out = run(write_patch(requiring(theirs)))
+    assert code == 1
+    assert f"needs commit {theirs}, which is not in your current branch" in out
+    assert "Pass --ignore-requires to apply anyway." in out
+    assert "Nothing was applied." in out
+    assert (repo / "a.py").read_text() == A_PY
+    assert not (repo / ".xtr").exists()
+
+    git("merge", "-q", "theirs")
+    code, out = run(write_patch(requiring(theirs)))
+    assert code == 0, out
+
+
+def test_requires_a_descendant_of_head_is_not_met(repo, run):
+    """'On or after': being behind the commit is the case to catch."""
+    (repo / "b.py").write_text("y = 1\n")
+    git("add", ".")
+    git("commit", "-qm", "second")
+    newer = head()
+    git("checkout", "-q", "--detach", "HEAD~1")
+    code, out = run(write_patch(requiring(newer)))
+    assert code == 1
+    assert (repo / "a.py").read_text() == A_PY
+
+
+def test_requires_before_and_after_a_pull(tmp_path, monkeypatch, run):
+    """The reason this exists: applying a patch before `git pull`."""
+    origin = tmp_path / "origin"
+    init_repo(origin)
+    (origin / "a.py").write_text(A_PY)
+    git("add", ".", cwd=origin)
+    git("commit", "-qm", "init", cwd=origin)
+    mine = tmp_path / "mine"
+    git("clone", "-q", str(origin), str(mine))
+    git("config", "user.name", "Me", cwd=mine)
+    git("config", "user.email", "me@example.com", cwd=mine)
+
+    # Someone else pushes work the patch builds on.
+    (origin / "a.py").write_text(A_PY + "\n\ndef helper():\n    pass\n")
+    git("commit", "-qam", "add helper", cwd=origin)
+    theirs = head(cwd=origin)
+    patch = requiring(
+        theirs,
+        "--- a/a.py\n@ Use the helper\n<<<<\ndef helper():\n    pass\n====\n"
+        "def helper():\n    return 1\n>>>>\n",
+    )
+
+    monkeypatch.chdir(mine)
+    code, out = run(write_patch(patch))
+    assert code == 1
+    assert f"needs commit {theirs}, which this clone does not have" in out
+    assert (mine / "a.py").read_text() == A_PY
+
+    git("fetch", "-q", cwd=mine)
+    code, out = run(write_patch(patch))
+    assert code == 1
+    assert "which is not in your current branch" in out
+
+    git("pull", "-q", cwd=mine)
+    code, out = run(write_patch(patch))
+    assert code == 0, out
+    assert "return 1" in (mine / "a.py").read_text()
+
+
+def test_requires_an_unknown_commit(repo, run):
+    code, out = run(write_patch(requiring("deadbeefdeadbeef")))
+    assert code == 1
+    assert "needs commit deadbeefdeadbeef, which this clone does not have" in out
+    assert (repo / "a.py").read_text() == A_PY
+
+
+@pytest.mark.parametrize("value", ["main", "HEAD", "--help", "v1.0", "abc", "-n1", "HEAD~1"])
+def test_requires_takes_only_hashes(repo, run, value):
+    code, out = run(write_patch(requiring(value)))
+    assert code == 1
+    assert f"`! REQUIRES {value}`, which is not a commit hash" in out
+    assert (repo / "a.py").read_text() == A_PY
+
+
+def test_requires_a_hash_that_names_a_tree_not_a_commit(repo, run):
+    tree = git("rev-parse", "HEAD^{tree}").strip()
+    code, out = run(write_patch(requiring(tree)))
+    assert code == 1
+    assert (repo / "a.py").read_text() == A_PY
+
+
+def test_requires_several_reports_only_the_unmet(repo, run):
+    patch = f"! REQUIRES {head()}\n! REQUIRES deadbeef\n" + PATCH_FOO
+    code, out = run(write_patch(patch))
+    assert code == 1
+    assert "deadbeef" in out
+    assert f"needs commit {head()}" not in out
+    assert (repo / "a.py").read_text() == A_PY
+
+
+def test_requires_outside_a_repository(tmp_path, monkeypatch, run):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.py").write_text(A_PY)
+    code, out = run(write_patch(requiring("abc1234")))
+    assert code == 1
+    assert "this is not a git repository, so that cannot be checked" in out
+    assert (tmp_path / "a.py").read_text() == A_PY
+
+
+def test_requires_without_git_installed(repo, run, monkeypatch):
+    monkeypatch.setattr(gitcommit.shutil, "which", lambda name: None)
+    code, out = run(write_patch(requiring(head())))
+    assert code == 1
+    assert "git is not installed, so that cannot be checked" in out
+    assert (repo / "a.py").read_text() == A_PY
+
+
+def test_requires_in_a_repository_with_no_commits(tmp_path, monkeypatch, run):
+    d = tmp_path / "fresh"
+    init_repo(d)
+    monkeypatch.chdir(d)
+    (d / "a.py").write_text(A_PY)
+    code, out = run(write_patch(requiring("abc1234")))
+    assert code == 1
+    assert (d / "a.py").read_text() == A_PY
+
+
+def test_ignore_requires(repo, run, monkeypatch):
+    code, out = run("--ignore-requires", write_patch(requiring("deadbeef")))
+    assert code == 0, out
+    assert "--ignore-requires" in out
+    assert "timeout=30" in (repo / "a.py").read_text()
+
+
+def test_ignore_requires_never_runs_git(tmp_path, monkeypatch, run):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.py").write_text(A_PY)
+
+    def explode(*a, **k):
+        raise AssertionError("git was run")
+
+    monkeypatch.setattr(subprocess, "run", explode)
+    code, out = run("--ignore-requires", write_patch(requiring("not-even-a-hash")))
+    assert code == 0, out
+    assert "timeout=30" in (tmp_path / "a.py").read_text()
+
+
+def test_ignore_requires_does_not_need_git_commit(repo, run):
+    code, out = run("--ignore-requires", write_patch(PATCH_FOO))
+    assert code == 0, out
+
+
+def test_requires_unmet_on_a_terminal_apply_anyway(repo, run, tty):
+    asked = tty("y")
+    code, out = run(write_patch(requiring("deadbeef")))
+    assert code == 0, out
+    assert asked == ["Apply anyway? [y/N] "]
+    assert "timeout=30" in (repo / "a.py").read_text()
+
+
+def test_requires_unmet_on_a_terminal_declined(repo, run, tty):
+    asked = tty("n")
+    code, out = run(write_patch(requiring("deadbeef")))
+    assert code == 1
+    assert len(asked) == 1
+    assert "Nothing was applied." in out
+    assert (repo / "a.py").read_text() == A_PY
+
+
+def test_requires_met_asks_nothing(repo, run, tty):
+    asked = tty()
+    code, out = run(write_patch(requiring(head())))
+    assert code == 0, out
+    assert asked == []
+
+
+def test_requires_is_checked_before_the_commit_checks(repo, run, tty):
+    """Unmet requirement plus a dirty target: one refusal, no stash prompt."""
+    (repo / "a.py").write_text(A_PY + "# wip\n")
+    asked = tty("n")
+    code, out = run("-gc", write_patch(requiring("deadbeef")))
+    assert code == 1
+    assert asked == ["Apply anyway? [y/N] "]
+    assert "Found uncommitted changes" not in out
+    assert stash_list() == []
+
+
+def test_requires_met_then_commit(repo, run):
+    code, out = run("-gc", write_patch(requiring(head())))
+    assert code == 0, out
+    assert commit_count() == 2
+    assert "REQUIRES" not in last_message()
+
+
+def test_requires_overridden_then_commit(repo, run, tty):
+    tty("y")
+    code, out = run("-gc", write_patch(requiring("deadbeef")))
+    assert code == 0, out
+    assert commit_count() == 2
+
+
+def test_revert_does_not_check_requires(repo, run):
+    patch = write_patch(requiring(head()))
+    run(patch)
+    Path(patch).write_text(requiring("deadbeef"))
+    code, out = run("--revert", patch)
+    assert code == 0, out
+    assert (repo / "a.py").read_text() == A_PY
+
+
+def test_requires_from_a_subdirectory(repo, run, monkeypatch):
+    sub = repo / "sub"
+    sub.mkdir()
+    (sub / "s.py").write_text("x = 1\n")
+    monkeypatch.chdir(sub)
+    patch = requiring(head(), "--- a/s.py\n<<<<\nx = 1\n====\nx = 2\n>>>>\n")
+    code, out = run(write_patch(patch))
+    assert code == 0, out
+    assert (sub / "s.py").read_text() == "x = 2\n"
+
+
 # --- end to end, as a real process ----------------------------------------
 
 

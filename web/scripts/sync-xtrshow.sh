@@ -12,7 +12,7 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="$here/vendor/xtrshow"
-files=(__init__.py cli.py repatch.py)
+files=(__init__.py cli.py repatch.py gitcommit.py)
 
 if [[ -n "${XTRSHOW_SRC:-}" ]]; then
   src="$XTRSHOW_SRC"

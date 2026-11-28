@@ -85,6 +85,8 @@ LLMs are unreliable at producing valid unified diffs — line numbers drift, con
 * **Checksum verification:** warns when a file was edited outside the patch loop since the last apply.
 * **Conflict detection:** overlapping hunks are caught pre-flight and skipped, never blindly stacked.
 * **Full lifecycle:** modify, insert, create files, delete sections, delete whole files (`! DELETE FILE`), replace a file wholesale (`! DELETE FILE` + a create block).
+* **Renames:** `! REPLACE old => new` renames a whole word everywhere in a file, instead of a pile of one-line hunks.
+* **Commit requirements:** a patch can start with `! REQUIRES <commit>`, and is refused until that commit is in your branch.
 * **Permissions and ownership:** `! CHMOD +x` / `! CHMOD 644` and `! CHOWN user:group` lines under a file header, applied after that file's hunks and restored by `--revert`. Adding setuid/setgid/sticky bits needs `--allow-special-modes`.
 * **Idempotent:** re-applying a patch detects already-applied hunks and skips them.
 * **Error reports:** failed applies generate a `.rpterr` bundle (original + patch + log) you can paste straight back to the LLM.

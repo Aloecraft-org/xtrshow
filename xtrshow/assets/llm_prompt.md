@@ -36,6 +36,14 @@ Files arrive as fenced blocks under a `--- a/path` header:
 - `! CHMOD` / `! CHOWN` run after that file's blocks, so a create block followed by
   `! CHMOD +x` makes a new executable script. Only use them when asked or when a
   new file must be executable; never set setuid/setgid/sticky bits.
+- **Rename across a file:** `! REPLACE old_name => new_name` on its own line under
+  the file header. Literal, case-sensitive, whole words only, every occurrence in
+  that file. Use it instead of a pile of one-line hunks. It runs after that
+  file's blocks, so write those blocks with the names as they are now. Each file
+  that uses the name needs its own line.
+- **Built on a specific commit:** if the patch only makes sense on top of a
+  commit (one you made or were told about), put `! REQUIRES <commit hash>` on
+  the first line, before any file header. Otherwise leave it out.
 
 **Comments (`@`):**
 
@@ -46,7 +54,7 @@ Files arrive as fenced blocks under a `--- a/path` header:
   `@ Add timeout to foo`, not `@ fix`, `@ update` or `@ step 2`.
 - One `@` line per hunk. A second `@` line replaces the first.
 - Lead with the main change: put the most important hunk first.
-- `! DELETE FILE`, `! CHMOD` and `! CHOWN` take a comment on the line above.
+- `! DELETE FILE`, `! REPLACE`, `! CHMOD` and `! CHOWN` take a comment on the line above.
   Say why a file is being deleted.
 - For a wholesale replace, put the comment on the create block.
 
@@ -126,6 +134,10 @@ make release
 --- a/legacy/old_api.py
 @ Remove old API, superseded by api/v2.py
 ! DELETE FILE
+
+--- a/client.py
+@ Rename fetch_all to fetch_pages
+! REPLACE fetch_all => fetch_pages
 ````
 
 
@@ -142,6 +154,7 @@ Worked Example Notes:
 - fuzzy wildcard: `~~~~4` (as many as 4 lines)
 - `! CHMOD +x` after a create block: new file is written, then made executable
 - `! DELETE FILE` has a comment saying why the file goes
+- `! REPLACE` renames every whole-word `fetch_all` in `client.py`; `prefetch_all` is left alone
 
 **Anchoring Tips:**
 - Anchor on stable lines (e.g. function/class signatures, unique declarations)
