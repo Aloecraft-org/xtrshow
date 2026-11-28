@@ -30,6 +30,14 @@ ABS_BACKUP_PREFIX = "_abs"
 # `! CHMOD <mode>` / `! CHOWN <owner>` attribute directives.
 ATTR_DIRECTIVE_RE = re.compile(r"^!\s*(CHMOD|CHOWN)\s+(\S+)\s*$", re.IGNORECASE)
 
+# `! REPLACE old => new`: a literal, whole-word rename across one file.
+REPLACE_DIRECTIVE_RE = re.compile(r"^!\s*REPLACE\b(.*)$", re.IGNORECASE)
+REPLACE_ARGS_RE = re.compile(r"^\s+(\S.*?)\s+=>\s+(\S.*?)\s*$")
+
+# `! REQUIRES <commit>`: the patch builds on that commit.
+REQUIRES_DIRECTIVE_RE = re.compile(r"^!\s*REQUIRES\s+(\S+)\s*$", re.IGNORECASE)
+BLOCK_OPEN_RE = re.compile(r"^(?:<<<<|<<)\s*(\d+)?(?:[:~](\d+))?\s*$")
+
 # setuid, setgid and sticky. A patch may not add these without
 # --allow-special-modes: a model asking for setuid is almost never what the
 # person running xtrpatch meant, and the cost of being wrong is high.
@@ -338,10 +346,32 @@ def parse_multi_file_patch(content, default_target=None):
             i += 1
             continue
 
+        # ! REPLACE old => new — whole-word rename, applied after the file's
+        # hunks. A line that starts like one but does not parse is kept, with
+        # no `old`, so it is reported as a failure rather than dropped: a
+        # rename that silently does nothing is worse than one that complains.
+        replace_match = REPLACE_DIRECTIVE_RE.match(stripped)
+        if replace_match:
+            if current_file:
+                parts = REPLACE_ARGS_RE.match(replace_match.group(1))
+                changes.setdefault(current_file, []).append(
+                    {
+                        "patch_line": i + 1,
+                        "op": "replace",
+                        "old": parts.group(1) if parts else None,
+                        "new": parts.group(2) if parts else None,
+                        "raw": stripped,
+                        "annotation": current_annotation,
+                    }
+                )
+                current_annotation = None
+            i += 1
+            continue
+
         # Support ':' or '~' for range hints (e.g., 10:15 or 10~15)
         # ALLOW '<<' (2 brackets) as a start marker, but ONLY if the line ends immediately
         # after the hint. This prevents matching C++ streams or bitwise shifts like '<< 5;'.
-        block_match = re.match(r"^(?:<<<<|<<)\s*(\d+)?(?:[:~](\d+))?\s*$", stripped)
+        block_match = BLOCK_OPEN_RE.match(stripped)
 
         if block_match:
             block_start_line = i + 1
@@ -399,6 +429,32 @@ def parse_multi_file_patch(content, default_target=None):
         i += 1
 
     return changes
+
+
+def parse_requires(content):
+    """
+    The commits a patch says it builds on: every `! REQUIRES <commit>` line
+    outside a search/replace block, in order, without duplicates.
+
+    Kept apart from parse_multi_file_patch because a requirement belongs to
+    the patch, not to one of its files. Lines inside a block are skipped: a
+    patch to this project's own documentation may well contain the directive
+    as text it is adding.
+    """
+    found = []
+    in_block = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if in_block:
+            in_block = stripped != ">>>>"
+            continue
+        if BLOCK_OPEN_RE.match(stripped):
+            in_block = True
+            continue
+        match = REQUIRES_DIRECTIVE_RE.match(stripped)
+        if match and match.group(1) not in found:
+            found.append(match.group(1))
+    return found
 
 
 def _current_umask():
@@ -507,14 +563,137 @@ def format_owner(uid, gid):
     return f"{user}:{group}"
 
 
+# Outcomes that mean a block did not do what the patch asked. Anything else
+# is either APPLIED or a no-op (already applied, already absent, unchanged).
+FAILURE_STATUSES = frozenset({"FAILED", "BLOCKED", "CONFLICT", "EMPTY_SEARCH"})
+
+
+def _record(items, block, status, auto_label=None):
+    """
+    Append one block's outcome to a file's result list and return the entry.
+
+    `label` is the patch author's `@` comment when there is one. Whole-file
+    and attribute directives fall back to `auto_label`, a description
+    xtrpatch made up ("Create file", "CHMOD +x"), flagged with `auto` so a
+    caller can tell the two apart. `items` may be None: callers that do not
+    want results pass nothing and get a throwaway entry back.
+    """
+    label = block.get("annotation") if block else None
+    auto = False
+    if not label or (auto_label and label == auto_label):
+        label, auto = auto_label, True
+    entry = {"label": label, "auto": auto, "status": status}
+    if items is not None:
+        items.append(entry)
+    return entry
+
+
+def result_failed(result):
+    """True when any block of one file's result did not apply."""
+    return any(i["status"] in FAILURE_STATUSES for i in result["items"])
+
+
+def result_changed(result):
+    """True when at least one block of one file's result was applied."""
+    return any(i["status"] == "APPLIED" for i in result["items"])
+
+
 def _is_attr_op(block):
-    return "op" in block
+    return block.get("op") in ("chmod", "chown")
 
 
-def _apply_attribute_ops(filepath, ops, output_fn, allow_special_modes=False):
+def _is_replace_op(block):
+    return block.get("op") == "replace"
+
+
+def _op_label(op):
+    """How a directive is named in reports when it has no `@` comment."""
+    if _is_replace_op(op):
+        if op["old"] is None:
+            return op["raw"].lstrip("! ").strip()
+        return f"REPLACE {op['old']} => {op['new']}"
+    return f"{op['op'].upper()} {op['arg']}"
+
+
+def _word_pattern(text):
+    """
+    A regex for `text` taken literally, as a whole word.
+
+    The boundary is only demanded at an end that is itself a word character:
+    `count` must not match inside `discount`, but `->` or `.old` have no word
+    edge to respect on that side.
+    """
+    head = r"(?<!\w)" if re.match(r"\w", text[0]) else ""
+    tail = r"(?!\w)" if re.match(r"\w", text[-1]) else ""
+    return re.compile(head + re.escape(text) + tail)
+
+
+def _apply_replace_ops(filepath, ops, output_fn, items=None):
+    """
+    Run `! REPLACE old => new` directives against an existing file, in order.
+
+    Each is literal and whole-word. One that finds nothing is a failure,
+    unless `new` is already there, which is what a re-run looks like. Returns
+    True if any directive failed.
+    """
+    outcomes = [
+        _record(items, op, "FAILED", auto_label=_op_label(op)) for op in ops
+    ]
+    try:
+        # newline="" both ways: a rename has no business changing line endings.
+        with open(filepath, "r", newline="") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        for op in ops:
+            output_fn(f"❌ {filepath} ... {_op_label(op)} FAILED: {e}")
+        return True
+
+    changed = False
+    for op, outcome in zip(ops, outcomes):
+        label = _op_label(op)
+        old, new = op["old"], op["new"]
+        if old is None:
+            output_fn(
+                f"❌ {filepath} ... {label} FAILED: expected `! REPLACE old => new`"
+            )
+            continue
+        if old == new:
+            output_fn(f"❌ {filepath} ... {label} FAILED: old and new are the same")
+            continue
+        text, count = _word_pattern(old).subn(lambda _m, new=new: new, text)
+        if count:
+            changed = True
+            outcome["status"] = "APPLIED"
+            places = "place" if count == 1 else "places"
+            output_fn(f"🔁 {filepath} ... {label} ({count} {places})")
+        elif _word_pattern(new).search(text):
+            outcome["status"] = "SKIPPED"
+            output_fn(f"🧠 {filepath} ... {label} [Already Applied]")
+        else:
+            output_fn(f"❌ {filepath} ... {label} FAILED: no whole-word match")
+
+    if changed:
+        try:
+            with open(filepath, "w", newline="") as f:
+                f.write(text)
+        except OSError as e:
+            for outcome in outcomes:
+                if outcome["status"] == "APPLIED":
+                    outcome["status"] = "FAILED"
+            output_fn(f"❌ {filepath} ... FAILED TO WRITE: {e}")
+        _save_state_checksum(filepath)
+    return any(o["status"] == "FAILED" for o in outcomes)
+
+
+def _apply_attribute_ops(
+    filepath, ops, output_fn, allow_special_modes=False, items=None
+):
     """Run `! CHMOD` / `! CHOWN` directives against an existing file, in order."""
     for op in ops:
-        label = f"{op['op'].upper()} {op['arg']}"
+        label = _op_label(op)
+        # Assume failure until a branch below says otherwise, so an early
+        # `continue` cannot leave a refused directive looking successful.
+        outcome = _record(items, op, "FAILED", auto_label=label)
         try:
             st = os.stat(filepath)
             if op["op"] == "chmod":
@@ -528,6 +707,7 @@ def _apply_attribute_ops(filepath, ops, output_fn, allow_special_modes=False):
                     continue
                 if new == old:
                     output_fn(f"⏭️  {filepath} ... MODE {format_mode(old)} (unchanged)")
+                    outcome["status"] = "SKIPPED"
                     continue
                 os.chmod(filepath, new)
                 output_fn(
@@ -542,6 +722,7 @@ def _apply_attribute_ops(filepath, ops, output_fn, allow_special_modes=False):
                 st = os.stat(filepath)
                 new = format_owner(st.st_uid, st.st_gid)
                 output_fn(f"👤 {filepath} ... OWNER {old} → {new}")
+            outcome["status"] = "APPLIED"
         except (ValueError, OSError) as e:
             output_fn(f"❌ {filepath} ... {label} FAILED: {e}")
 
@@ -797,15 +978,49 @@ def save_error_report(target_filepath, version_index, log_content):
         print(f"  ! Warning: Failed to generate error report: {e}")
 
 
+def _reverted_labels(backup_dir, filename, version, target):
+    """
+    The `@` comments of the patch a backup was taken for, i.e. what restoring
+    that backup undoes. Read from the patch archived beside the backup, so it
+    describes the change actually being reverted rather than whichever patch
+    file happens to be named on the command line. Best effort: no archive, or
+    one that no longer parses, yields an empty list.
+    """
+    suffix = ".patch" if version == 0 else f".{version}.patch"
+    archive = backup_dir / (filename + suffix)
+    try:
+        changes = parse_multi_file_patch(
+            archive.read_text(), default_target=str(target)
+        )
+    except (OSError, UnicodeDecodeError):
+        return []
+    for path, blocks in changes.items():
+        try:
+            same = Path(path).resolve() == target
+        except OSError:
+            same = False
+        if same:
+            return [b["annotation"] for b in blocks if b.get("annotation")]
+    return []
+
+
 def revert_file(target_file):
-    """Reverts the file to its most recent backup."""
+    """
+    Reverts the file to its most recent backup.
+
+    Returns a result in the shape apply_changes uses: the path plus one item
+    per comment of the patch being undone, or a single FAILED item when
+    there was nothing to restore.
+    """
+    result = {"path": target_file, "items": []}
+    outcome = _record(result["items"], None, "FAILED")
     try:
         target = Path(target_file).resolve()
         backup_dir, filename = _backup_location(target)
 
         if not backup_dir.exists():
             print(f"No backups found for {target_file}")
-            return
+            return result
 
         backups = []
         base = backup_dir / (filename + ".orig")
@@ -821,7 +1036,7 @@ def revert_file(target_file):
 
         if not backups:
             print(f"No backups found for {target_file}")
-            return
+            return result
 
         backups.sort(key=lambda x: x[0], reverse=True)
         latest_version, latest_backup = backups[0]
@@ -833,13 +1048,26 @@ def revert_file(target_file):
         _restore_attrs(latest_backup, target)
         print("  ✓ File restored successfully.")
 
+        labels = _reverted_labels(backup_dir, filename, latest_version, target)
+        if labels:
+            result["items"] = [
+                {"label": label, "auto": False, "status": "APPLIED"}
+                for label in labels
+            ]
+        else:
+            outcome["status"] = "APPLIED"
+
     except Exception as e:
         print(f"Error during revert: {e}")
+    return result
 
 
-def _apply_file_deletion(filepath, patch_source_path, output_fn, log_buffer):
+def _apply_file_deletion(
+    filepath, patch_source_path, output_fn, log_buffer, block=None, items=None
+):
     """Handle file deletion (empty search + empty replace)."""
     version = 0
+    outcome = _record(items, block, "FAILED", auto_label="Delete file")
     try:
         backup_path, version = create_backup(filepath)
         if backup_path and patch_source_path:
@@ -858,6 +1086,7 @@ def _apply_file_deletion(filepath, patch_source_path, output_fn, log_buffer):
         except Exception:
             pass
         output_fn(f"🗑️  {filepath} ... DELETED (Δ-{orig_len} lines)")
+        outcome["status"] = "APPLIED"
         save_log_file("\n".join(log_buffer), filepath, version)
     except Exception as e:
         output_fn(f"❌ {filepath} ... FAILED TO DELETE: {e}")
@@ -887,9 +1116,12 @@ def _is_whole_file_create(block):
     return not block["search"] and bool(block["replace"]) and block["hint"] in (None, 0)
 
 
-def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buffer):
+def _apply_file_creation(
+    filepath, blocks, patch_source_path, output_fn, log_buffer, items=None
+):
     """Handle file creation (empty search, non-empty replace)."""
     version = 0
+    outcome = _record(items, blocks[0], "FAILED", auto_label="Create file")
     try:
         new_content = "".join([l + "\n" for l in blocks[0]["replace"]])
         new_len = len(blocks[0]["replace"])
@@ -907,6 +1139,7 @@ def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buf
 
         _save_state_checksum(filepath)
         output_fn(f"✨ {filepath} ... CREATED (Δ+{new_len} lines)")
+        outcome["status"] = "APPLIED"
         save_log_file("\n".join(log_buffer), filepath, version)
     except Exception as e:
         output_fn(f"❌ {filepath} ... FAILED TO CREATE: {e}")
@@ -914,7 +1147,9 @@ def _apply_file_creation(filepath, blocks, patch_source_path, output_fn, log_buf
     return version
 
 
-def _apply_file_rewrite(filepath, blocks, patch_source_path, output_fn, log_buffer):
+def _apply_file_rewrite(
+    filepath, blocks, patch_source_path, output_fn, log_buffer, items=None
+):
     """
     Handle whole-file replacement: `! DELETE FILE` followed by a create block.
 
@@ -925,6 +1160,9 @@ def _apply_file_rewrite(filepath, blocks, patch_source_path, output_fn, log_buff
     that guess would be destructive. The explicit delete states the intent.
     """
     version = 0
+    # One outcome for the pair: the create block carries the comment that
+    # describes the new contents, the delete half is only the mechanism.
+    outcome = _record(items, blocks[1], "FAILED", auto_label="Rewrite file")
     try:
         new_lines = blocks[1]["replace"]
         new_content = "".join([l + "\n" for l in new_lines])
@@ -958,6 +1196,7 @@ def _apply_file_rewrite(filepath, blocks, patch_source_path, output_fn, log_buff
         delta = len(new_lines) - orig_len
         sign = "+" if delta >= 0 else ""
         output_fn(f"♻️  {filepath} ... REWRITTEN (Δ{sign}{delta} lines)")
+        outcome["status"] = "APPLIED"
         save_log_file("\n".join(log_buffer), filepath, version)
     except Exception as e:
         output_fn(f"❌ {filepath} ... FAILED TO REWRITE: {e}")
@@ -1131,50 +1370,72 @@ def _print_hunk_report(hunk_stats, file_delta_total, filepath, output_fn):
 
 
 def apply_changes(changes_dict, patch_source_path=None, allow_special_modes=False):
-    """Applies parsed changes to files."""
+    """
+    Applies parsed changes to files.
+
+    Returns one result per file, in patch order: `{"path", "items"}`, where
+    each item is a block's `{"label", "auto", "status"}`. See _record,
+    result_failed and result_changed.
+    """
+    results = []
     for filepath, blocks in changes_dict.items():
         log_buffer = []
+        items = []
+        results.append({"path": filepath, "items": items})
 
         def output(msg):
             print(msg)
             log_buffer.append(str(msg))
 
-        content_blocks = [b for b in blocks if not _is_attr_op(b)]
+        content_blocks = [b for b in blocks if "op" not in b]
+        replace_ops = [b for b in blocks if _is_replace_op(b)]
         attr_ops = [b for b in blocks if _is_attr_op(b)]
 
         version = None
         if content_blocks:
             version = _apply_content_changes(
-                filepath, content_blocks, patch_source_path, output, log_buffer
+                filepath, content_blocks, patch_source_path, output, log_buffer, items
             )
 
-        if not attr_ops:
+        # Directives run after the file's hunks, renames before attributes.
+        if not replace_ops and not attr_ops:
             continue
 
         if not os.path.exists(filepath):
-            for op in attr_ops:
-                output(
-                    f"❌ {filepath} ... {op['op'].upper()} {op['arg']} FAILED: "
-                    "file does not exist"
-                )
+            for op in replace_ops + attr_ops:
+                label = _op_label(op)
+                _record(items, op, "FAILED", auto_label=label)
+                output(f"❌ {filepath} ... {label} FAILED: file does not exist")
         else:
             if version is None:
-                # Attribute-only change: back up first so --revert can put the
-                # old mode and owner back.
+                # Directive-only change: back up first so --revert can put the
+                # old contents, mode and owner back.
+                if replace_ops:
+                    _verify_checksum(filepath)
                 backup_path, version = create_backup(filepath)
                 if backup_path and patch_source_path:
                     archive_patch_file(patch_source_path, filepath, version)
                 elif not backup_path:
                     version = 0
-            _apply_attribute_ops(filepath, attr_ops, output, allow_special_modes)
+            if replace_ops and _apply_replace_ops(
+                filepath, replace_ops, output, items
+            ):
+                save_error_report(filepath, version, "\n".join(log_buffer))
+            _apply_attribute_ops(
+                filepath, attr_ops, output, allow_special_modes, items
+            )
         save_log_file("\n".join(log_buffer), filepath, version or 0)
+    return results
 
 
-def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buffer):
+def _apply_content_changes(
+    filepath, blocks, patch_source_path, output, log_buffer, items=None
+):
     """
     Apply one file's search/replace blocks.
 
     Returns the backup version written, or None when nothing was backed up.
+    Each block's outcome is appended to `items` when a list is passed.
     """
     # --- File Rewrite ---
     # `! DELETE FILE` plus a create block on one path. Both hunks land in
@@ -1186,7 +1447,7 @@ def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buff
         and _is_whole_file_create(blocks[1])
     ):
         return _apply_file_rewrite(
-            filepath, blocks, patch_source_path, output, log_buffer
+            filepath, blocks, patch_source_path, output, log_buffer, items
         )
 
     # --- File Deletion ---
@@ -1197,7 +1458,7 @@ def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buff
             and not blocks[0]["replace"]
         ):
             return _apply_file_deletion(
-                filepath, patch_source_path, output, log_buffer
+                filepath, patch_source_path, output, log_buffer, blocks[0], items
             )
 
     # --- File Creation ---
@@ -1208,13 +1469,16 @@ def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buff
             and not blocks[0]["replace"]
         ):
             output(f"⏭️  {filepath} ... ALREADY ABSENT (nothing to delete)")
+            _record(items, blocks[0], "SKIPPED", auto_label="Delete file")
             return None
         if len(blocks) == 1 and not blocks[0]["search"]:
             return _apply_file_creation(
-                filepath, blocks, patch_source_path, output, log_buffer
+                filepath, blocks, patch_source_path, output, log_buffer, items
             )
         else:
             output(f"❌ {filepath} ... NOT FOUND (Cannot modify missing file)")
+            for block in blocks:
+                _record(items, block, "FAILED")
             return None
 
     # --- Modification ---
@@ -1230,6 +1494,8 @@ def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buff
             file_lines = f.readlines()
     except Exception as e:
         output(f"❌ {filepath} ... ERROR READING: {e}")
+        for block in blocks:
+            _record(items, block, "FAILED")
         return version
 
     error_occurred, file_delta_total, hunk_stats = _process_hunks(
@@ -1237,13 +1503,12 @@ def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buff
     )
 
     _print_hunk_report(hunk_stats, file_delta_total, filepath, output)
+    for block, stat_ in zip(blocks, hunk_stats):
+        _record(items, block, stat_["status"])
 
     save_log_file("\n".join(log_buffer), filepath, version)
 
-    error_occurred = any(
-        h["status"] in ("FAILED", "BLOCKED", "CONFLICT", "EMPTY_SEARCH")
-        for h in hunk_stats
-    )
+    error_occurred = any(h["status"] in FAILURE_STATUSES for h in hunk_stats)
     if error_occurred:
         save_error_report(filepath, version, "\n".join(log_buffer))
 
@@ -1253,6 +1518,82 @@ def _apply_content_changes(filepath, blocks, patch_source_path, output, log_buff
             f.writelines(file_lines)
     _save_state_checksum(filepath)
     return version
+
+
+def _revert_targets(candidate):
+    """
+    What `--revert <candidate>` should restore: every file a patch names when
+    the candidate is a patch file, otherwise the candidate itself.
+    """
+    if os.path.exists(candidate) and os.path.isfile(candidate):
+        with open(candidate, "r") as f:
+            try:
+                content = f.read()
+                if "--- a/" in content or "File: " in content:
+                    changes = parse_multi_file_patch(content)
+                    if changes:
+                        print(
+                            f"Found {len(changes)} target(s) in patch file to revert."
+                        )
+                        return list(changes.keys())
+            except UnicodeDecodeError:
+                pass
+    return [candidate]
+
+
+def _requirements_met(requires, ignore):
+    """
+    Check the patch's `! REQUIRES <commit>` lines before anything is written.
+    Returns False when the run should stop.
+
+    Independent of --git-commit: the point is to not apply a patch on top of
+    a checkout that is missing the work it builds on, committing or not.
+    """
+    if not requires:
+        return True
+    if ignore:
+        print(f"Skipping the commit check ({', '.join(requires)}): --ignore-requires.")
+        return True
+
+    from xtrshow import gitcommit
+
+    problems = gitcommit.check_requires(requires)
+    if not problems:
+        return True
+    for problem in problems:
+        print(problem)
+    if gitcommit.is_interactive():
+        return gitcommit.confirm("Apply anyway?")
+    print("Pass --ignore-requires to apply anyway.")
+    return False
+
+
+def _run(args, paths, action, revert=False):
+    """
+    Run `action` and return the exit code. With --git-commit the run is
+    handed to gitcommit, which checks the repository first and commits
+    after. Without it git is never consulted and the code stays 0, as it
+    was before the flag existed.
+    """
+    if not args.git_commit:
+        action()
+        return 0
+
+    # Imported here so plain xtrpatch never loads it. See gitcommit.py.
+    from xtrshow.gitcommit import GitCommit, GitError
+
+    session = GitCommit(
+        prefix=args.git_msg_prefix,
+        allow_dirty=args.git_allow_dirty,
+        on_error=args.git_on_error,
+    )
+    try:
+        return session.run(paths, action, revert=revert)
+    except GitError as e:
+        verb = "reverted" if revert else "applied"
+        print(f"Error: {e}")
+        print(f"Nothing was {verb}.")
+        return 1
 
 
 def main():
@@ -1272,11 +1613,52 @@ def main():
         action="store_true",
         help="Let ! CHMOD set setuid, setgid or the sticky bit",
     )
+    git_group = parser.add_argument_group(
+        "git", "Commit what the patch (or --revert) changed, and check what it builds on."
+    )
+    git_group.add_argument(
+        "-gc",
+        "--git-commit",
+        action="store_true",
+        help="Commit the changed files on the current branch",
+    )
+    git_group.add_argument(
+        "-gmp",
+        "--git-msg-prefix",
+        metavar="PREFIX",
+        help='Start of the commit subject (default: "[xtrpatch] ")',
+    )
+    git_group.add_argument(
+        "--git-allow-dirty",
+        action="store_true",
+        help="Commit target files whole even if they already had uncommitted "
+        "changes, instead of asking to stash them",
+    )
+    git_group.add_argument(
+        "--ignore-requires",
+        action="store_true",
+        help="Apply even if a `! REQUIRES <commit>` line in the patch is not met",
+    )
+    git_group.add_argument(
+        "--git-on-error",
+        choices=("ask", "commit", "skip"),
+        help="Whether to still commit when some changes failed (default: ask; "
+        "skip when there is no terminal)",
+    )
     parser.add_argument(
         "args", nargs="*", help="File to revert, or Patch file to apply"
     )
 
     args = parser.parse_args()
+
+    if not args.git_commit:
+        for flag, given in (
+            ("-gmp/--git-msg-prefix", args.git_msg_prefix is not None),
+            ("--git-allow-dirty", args.git_allow_dirty),
+            ("--git-on-error", args.git_on_error is not None),
+        ):
+            if given:
+                parser.error(f"{flag} needs -gc/--git-commit")
 
     if not args.args:
         parser.print_help()
@@ -1286,24 +1668,15 @@ def main():
         print(f"  ↪ Moved {src_path.name} into {XTR_DIRNAME}/{dest_path.name}")
 
     if args.revert:
-        target_candidate = args.args[0]
-        if os.path.exists(target_candidate) and os.path.isfile(target_candidate):
-            with open(target_candidate, "r") as f:
-                try:
-                    content = f.read()
-                    if "--- a/" in content or "File: " in content:
-                        changes = parse_multi_file_patch(content)
-                        if changes:
-                            print(
-                                f"Found {len(changes)} target(s) in patch file to revert."
-                            )
-                            for filepath in changes.keys():
-                                revert_file(filepath)
-                            sys.exit(0)
-                except UnicodeDecodeError:
-                    pass
-        revert_file(target_candidate)
-        sys.exit(0)
+        targets = _revert_targets(args.args[0])
+        sys.exit(
+            _run(
+                args,
+                targets,
+                lambda: [revert_file(target) for target in targets],
+                revert=True,
+            )
+        )
 
     patch_path = None
     target_override = None
@@ -1330,10 +1703,20 @@ def main():
         print("No valid blocks found in patch file.")
         sys.exit(1)
 
-    apply_changes(
-        changes,
-        patch_source_path=patch_path,
-        allow_special_modes=args.allow_special_modes,
+    if not _requirements_met(parse_requires(content), args.ignore_requires):
+        print("Nothing was applied.")
+        sys.exit(1)
+
+    sys.exit(
+        _run(
+            args,
+            list(changes.keys()),
+            lambda: apply_changes(
+                changes,
+                patch_source_path=patch_path,
+                allow_special_modes=args.allow_special_modes,
+            ),
+        )
     )
 
 

@@ -14,7 +14,7 @@
 * **LLM-Friendly Formatting:** Wraps content in Markdown code blocks with language identifiers.
 * **Line Numbers:** Automatically prefixes lines with numbers (e.g., ` 12: def func():`) to allow precise referencing by LLMs.
 * **Clean Mode:** Optional `--clean` flag to output raw text without line numbers.
-* **Multi-File Export:** The `--multi` option splits output into individual files (e.g., `.xtrshow/src__main.py.xtr.md`) for RAG pipelines or specific upload requirements.
+* **Multi-File Export:** The `--multi` option splits output into individual files (e.g., `.xtr/multi/src__main.py.xtr.md`) for RAG pipelines or specific upload requirements.
 
 ### 🔍 Filtering & Scope
 * **Smart Ignores:** Automatically ignores common noise directories (`node_modules`, `.git`, `__pycache__`) via the `--ignore` flag.
@@ -53,3 +53,4 @@
 * **Multi-File Support:** Apply changes to multiple files in a single pass from a single response.
 * **File Creation:** Detects intent to create new files (via empty Search blocks).
 * **File Deletion:** Detects intent to delete files (via empty Search AND empty Replace blocks), while still backing them up first.
+* **Permissions and Ownership:** `! CHMOD +x` / `! CHMOD 644` and `! CHOWN user:group` lines under a file header, applied after that file's hunks and restored by `--revert`. Adding setuid, setgid or sticky bits needs `--allow-special-modes`.
