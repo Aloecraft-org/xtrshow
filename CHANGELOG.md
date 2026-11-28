@@ -7,6 +7,47 @@ edit that file, then run `technoproj-changelog generate`.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-11-28
+
+`v1.4.0`
+
+xtrpatch can commit what it applies, check that a patch's base commit
+is present, rename across a file, and set file mode and owner. Every
+new behavior is opt-in, so existing patches and invocations work as
+before.
+
+### Added
+
+- `-gc` / `--git-commit`, which commits exactly the files a patch (or
+  `--revert`) changed, on the current branch, with the patch's `@`
+  comments as the message. Every git check runs before a file is
+  written. A target with uncommitted changes stops the run unless the
+  user agrees to stash around the commit or passes
+  `--git-allow-dirty`. `-gmp` / `--git-msg-prefix` replaces the
+  `[xtrpatch] ` prefix, and `--git-on-error ask|commit|skip` decides
+  what happens when some changes failed. Without `-gc` git is never
+  run.
+- `! REQUIRES <commit>` at the top of a patch. xtrpatch refuses the
+  patch until that commit is HEAD or an ancestor of it, asking on a
+  terminal; `--ignore-requires` applies anyway. Only hashes are
+  accepted, and `--revert` does not run the check.
+- `! REPLACE old => new` under a file header, which renames every
+  whole-word, case-sensitive occurrence in that file and shares the
+  file's backup, so `--revert` undoes it.
+- `! CHMOD <mode>` and `! CHOWN <owner>` under a file header, applied
+  after that file's hunks and restored by `--revert`. Adding setuid,
+  setgid or sticky bits needs `--allow-special-modes`.
+- `mode` and `owner` fields in each exported block's `# meta:` line.
+
+### Changed
+
+- `apply_changes` and `revert_file` return per-file results instead of
+  `None`. Callers that ignored the return value are unaffected.
+- The LLM prompt asset teaches the new directives and asks for `@`
+  comments that read well on their own, since they can now become a
+  commit message.
+
+
 ## [1.3.0] - 2026-08-29
 
 `v1.3.0`
