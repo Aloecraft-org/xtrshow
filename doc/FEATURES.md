@@ -33,10 +33,20 @@
 * **Patch Archival:** The patch file used to create a change is archived alongside the backup (`file.py.1.patch`), linking the *cause* (the patch) to the *effect* (the backup).
 * **Revert Capability:** Built-in `--revert` command to restore files to their previous state instantly.
 
+### 📦 Git Commit
+* **One Step Apply and Commit:** `-gc` / `--git-commit` commits the files the patch changed on the current branch, and nothing else. Backups, the patch file, and unrelated work stay out.
+* **Message From the Patch:** The patch's `@` comments become the commit message, grouped by file, behind a `[xtrpatch] ` prefix you can change with `-gmp`.
+* **Checks First:** Missing git, no repository, a merge or rebase in progress, and no commit identity are all caught before any file is written.
+* **Protects Uncommitted Work:** If a target file already has changes, xtrpatch offers to stash them around the commit rather than silently committing them.
+* **Commit Requirements:** A patch can start with `! REQUIRES <commit>`. It is refused, with nothing written, until that commit is in the current branch, so a patch is never applied before the `git pull` it depends on. Works with or without `-gc`.
+* **Honest Partial Commits:** When some hunks fail it asks before committing, and the message lists what did not apply.
+* **Revert Too:** `--revert -gc` commits the restore and names the change it undid.
+
 ### 🧩 Robust Patching
 * **Whitespace Insensitivity:** Uses "fuzzy" matching to ignore differences in indentation or blank lines, which LLMs often get wrong.
 * **Line Hints:** Supports `<<<< START~END` syntax (e.g., `<<<< 50~55`) to help disambiguate identical code blocks found in multiple places.
 * **Tail Context (Lookahead):** Supports a secondary `====` block to verify the code *following* the insertion point, ensuring patches are applied in exactly the correct location.
+* **Whole-Word Renames:** `! REPLACE old => new` renames a name everywhere in a file. Literal and whole-word, so `count` never touches `discount`.
 * **Idempotency Checks:** Detects if a patch has already been applied and skips it gracefully instead of breaking the file.
 
 ### ⚡ Full Lifecycle Management
