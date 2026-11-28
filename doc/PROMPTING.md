@@ -35,7 +35,7 @@ Tell the LLM **how** to format its output so `xtrpatch` can read it. Copy the bl
     + never triple backticks, even with multiple files or hunks.
 - Hunk consists of,
     + a file header
-    + comment
+    + comment (`@`), at least one per file
     + opening sequence w/ optional line hint
     + search block
     + replace block
@@ -57,10 +57,23 @@ Tell the LLM **how** to format its output so `xtrpatch` can read it. Copy the bl
   `! CHMOD +x` makes a new executable script. Only use them when asked or when a
   new file must be executable; never set setuid/setgid/sticky bits.
 
+**Comments (`@`):**
+
+- Give every file at least one `@` comment. A run of small hunks with one
+  purpose (a rename, say) can share the comment on the first; a hunk that does
+  something different gets its own.
+- One line, imperative, about 60 characters or fewer, and clear on its own:
+  `@ Add timeout to foo`, not `@ fix`, `@ update` or `@ step 2`.
+- One `@` line per hunk. A second `@` line replaces the first.
+- Lead with the main change: put the most important hunk first.
+- `! DELETE FILE`, `! CHMOD` and `! CHOWN` take a comment on the line above.
+  Say why a file is being deleted.
+- For a wholesale replace, put the comment on the create block.
+
 **Syntax (Illustration only. Not the output wrapper):**
 
     --- a/path/to/file.py
-    @ optional: describe the change
+    @ describe the change
     <<<< LINE_HINT
     [code to find]
     ====
@@ -127,7 +140,7 @@ i = builder.create_i() \
 Worked Example Notes:
 
 - search blocks must be an exact match (careful for whitespace and comments)
-- each hunk has a comment explaining the change
+- each hunk has a comment explaining the change (at least one per file is required)
 - response is wrapped in quadruple backticks
 - output has multiple patches across multiple files
 - search block w/o line hint: `<<<<`
@@ -211,6 +224,7 @@ def help_me():
 ### Delete File
 ```text
 --- a/src/deprecated.py
+@ Remove deprecated module, nothing imports it
 ! DELETE FILE
 ```
 
@@ -220,17 +234,18 @@ block. The delete and the create name the same path, in that order:
 
 ```text
 --- a/src/bootstrap.sh
-@ Alpine version, replaced wholesale below
 ! DELETE FILE
 
 --- a/src/bootstrap.sh
-@ Debian version
+@ Port bootstrap from Alpine to Debian
 <<<<
 ====
 #!/bin/bash
 apt-get update
 >>>>
 ```
+
+Put the `@` comment on the create block: it describes the new contents.
 
 The order matters. A create block on its own against a file that already exists
 is refused, because that is also what a block that lost its search text looks

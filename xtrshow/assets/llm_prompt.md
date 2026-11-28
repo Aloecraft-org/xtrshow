@@ -15,7 +15,7 @@ Files arrive as fenced blocks under a `--- a/path` header:
     + never triple backticks, even with multiple files or hunks.
 - Hunk consists of,
     + a file header
-    + comment
+    + comment (`@`), at least one per file
     + opening sequence w/ optional line hint
     + search block
     + replace block
@@ -37,10 +37,23 @@ Files arrive as fenced blocks under a `--- a/path` header:
   `! CHMOD +x` makes a new executable script. Only use them when asked or when a
   new file must be executable; never set setuid/setgid/sticky bits.
 
+**Comments (`@`):**
+
+- Give every file at least one `@` comment. A run of small hunks with one
+  purpose (a rename, say) can share the comment on the first; a hunk that does
+  something different gets its own.
+- One line, imperative, about 60 characters or fewer, and clear on its own:
+  `@ Add timeout to foo`, not `@ fix`, `@ update` or `@ step 2`.
+- One `@` line per hunk. A second `@` line replaces the first.
+- Lead with the main change: put the most important hunk first.
+- `! DELETE FILE`, `! CHMOD` and `! CHOWN` take a comment on the line above.
+  Say why a file is being deleted.
+- For a wholesale replace, put the comment on the create block.
+
 **Syntax (Illustration only. Not the output wrapper):**
 
     --- a/path/to/file.py
-    @ optional: describe the change
+    @ describe the change
     <<<< LINE_HINT
     [code to find]
     ====
@@ -109,13 +122,17 @@ i = builder.create_i() \
 make release
 >>>>
 ! CHMOD +x
+
+--- a/legacy/old_api.py
+@ Remove old API, superseded by api/v2.py
+! DELETE FILE
 ````
 
 
 Worked Example Notes:
 - quadruple backticks ARE part of the example, but are NOT part of the patch format. Their function is to ensure that patch renders properly to LLM response window
 - search blocks must be an exact match (careful for whitespace and comments)
-- each hunk has a comment explaining the change
+- each hunk has a comment explaining the change (at least one per file is required)
 - response is wrapped in quadruple backticks
 - output has multiple patches across multiple files
 - search block w/o line hint: `<<<<`
@@ -124,6 +141,7 @@ Worked Example Notes:
 - exact wildcard: `~~~~=4` (exactly 4 lines)
 - fuzzy wildcard: `~~~~4` (as many as 4 lines)
 - `! CHMOD +x` after a create block: new file is written, then made executable
+- `! DELETE FILE` has a comment saying why the file goes
 
 **Anchoring Tips:**
 - Anchor on stable lines (e.g. function/class signatures, unique declarations)
